@@ -1,0 +1,12 @@
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Dependencies managed by pip (virtual environments)
+venv/
+.venv/
+
+# Environment files
+.env

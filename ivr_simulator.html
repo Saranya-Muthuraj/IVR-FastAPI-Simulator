@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IVR Call Simulator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .phone-container {
+            background: #1a1a2e;
+            border-radius: 30px;
+            padding: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+            max-width: 400px;
+            width: 100%;
+        }
+
+        .phone-screen {
+            background: #0f3460;
+            border-radius: 20px;
+            padding: 30px 20px;
+            min-height: 400px;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        .call-status {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .status-icon {
+            font-size: 3rem;
+            margin-bottom: 10px;
+        }
+
+        .status-text {
+            color: #4ecca3;
+            font-size: 0.9rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .call-display {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .caller-info {
+            text-align: center;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .caller-number {
+            color: white;
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .call-duration {
+            color: #4ecca3;
+            font-size: 0.9rem;
+        }
+
+        .ivr-output {
+            color: white;
+            font-size: 1rem;
+            line-height: 1.6;
+            margin-bottom: 15px;
+            flex-grow: 1;
+            overflow-y: auto;
+            max-height: 200px;
+        }
+
+        .ivr-output p {
+            margin-bottom: 10px;
+            animation: fadeIn 0.5s;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .speaking-indicator {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            margin-top: 10px;
+        }
+
+        .speaking-indicator.active {
+            display: flex;
+        }
+
+        .wave {
+            width: 4px;
+            height: 20px;
+            background: #4ecca3;
+            border-radius: 2px;
+            animation: wave 0.8s ease-in-out infinite;
+        }
+
+        .wave:nth-child(2) { animation-delay: 0.1s; }
+        .wave:nth-child(3) { animation-delay: 0.2s; }
+        .wave:nth-child(4) { animation-delay: 0.3s; }
+
+        @keyframes wave {
+            0%, 100% { height: 10px; }
+            50% { height: 30px; }
+        }
+
+        /* Keypad */
+        .keypad {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .key {
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            width: 70px;
+            height: 70px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: white;
+        }
+
+        .key:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: scale(1.05);
+        }
+
+        .key:active {
+            transform: scale(0.95);
+            background: #4ecca3;
+        }
+
+        .key-number {
+            font-size: 1.8rem;
+            font-weight: 600;
+        }
+
+        .key-letters {
+            font-size: 0.7rem;
+            opacity: 0.7;
+            margin-top: -5px;
+        }
+
+        .key.special {
+            grid-column: span 1;
+        }
+
+        .key.zero {
+            grid-column: 2;
+        }
+
+        /* Action buttons */
+        .action-buttons {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+            gap: 15px;
+        }
+
+        .action-btn {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 25px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-call {
+            background: #4ecca3;
+            color: #1a1a2e;
+        }
+
+        .btn-call:hover {
+            background: #3dbb8f;
+            transform: translateY(-2px);
+        }
+
+        .btn-hangup {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .btn-hangup:hover {
+            background: #c0392b;
+            transform: translateY(-2px);
+        }
+
+        .btn-call:disabled,
+        .btn-hangup:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Call history */
+        .call-history {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            padding: 15px;
+            margin-top: 15px;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .history-title {
+            color: #4ecca3;
+            font-size: 0.8rem;
+            font-weight: 600;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+
+        .history-item {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.85rem;
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .history-item:last-child {
+            border-bottom: none;
+        }
+
+        /* Scrollbar */
+        .ivr-output::-webkit-scrollbar,
+        .call-history::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .ivr-output::-webkit-scrollbar-track,
+        .call-history::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+        }
+
+        .ivr-output::-webkit-scrollbar-thumb,
+        .call-history::-webkit-scrollbar-thumb {
+            background: #4ecca3;
+            border-radius: 3px;
+        }
+
+        /* Mobile responsive */
+        @media (max-width: 480px) {
+            .key {
+                width: 60px;
+                height: 60px;
+            }
+
+            .key-number {
+                font-size: 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="phone-container">
+        <div class="phone-screen">
+            <div class="call-status">
+                <div class="status-icon" id="statusIcon">📞</div>
+                <div class="status-text" id="statusText">Ready to Call</div>
+            </div>
+
+            <div class="call-display">
+                <div class="caller-info">
+                    <div class="caller-number">+91 1800-123-456</div>
+                    <div class="call-duration" id="callDuration">00:00</div>
+                </div>
+
+                <div class="ivr-output" id="ivrOutput">
+                    <p style="opacity: 0.7;">Press "Start Call" to begin...</p>
+                </div>
+
+                <div class="speaking-indicator" id="speakingIndicator">
+                    <div class="wave"></div>
+                    <div class="wave"></div>
+                    <div class="wave"></div>
+                    <div class="wave"></div>
+                </div>
+            </div>
+
+            <div class="keypad" id="keypad" style="opacity: 0.5; pointer-events: none;">
+                <div class="key" data-key="1">
+                    <div class="key-number">1</div>
+                    <div class="key-letters"></div>
+                </div>
+                <div class="key" data-key="2">
+                    <div class="key-number">2</div>
+                    <div class="key-letters">ABC</div>
+                </div>
+                <div class="key" data-key="3">
+                    <div class="key-number">3</div>
+                    <div class="key-letters">DEF</div>
+                </div>
+                <div class="key" data-key="4">
+                    <div class="key-number">4</div>
+                    <div class="key-letters">GHI</div>
+                </div>
+                <div class="key" data-key="5">
+                    <div class="key-number">5</div>
+                    <div class="key-letters">JKL</div>
+                </div>
+                <div class="key" data-key="6">
+                    <div class="key-number">6</div>
+                    <div class="key-letters">MNO</div>
+                </div>
+                <div class="key" data-key="7">
+                    <div class="key-number">7</div>
+                    <div class="key-letters">PQRS</div>
+                </div>
+                <div class="key" data-key="8">
+                    <div class="key-number">8</div>
+                    <div class="key-letters">TUV</div>
+                </div>
+                <div class="key" data-key="9">
+                    <div class="key-number">9</div>
+                    <div class="key-letters">WXYZ</div>
+                </div>
+                <div class="key special" data-key="*">
+                    <div class="key-number">*</div>
+                </div>
+                <div class="key zero" data-key="0">
+                    <div class="key-number">0</div>
+                    <div class="key-letters">+</div>
+                </div>
+                <div class="key special" data-key="#">
+                    <div class="key-number">#</div>
+                </div>
+            </div>
+
+            <div class="action-buttons">
+                <button class="action-btn btn-call" id="btnCall" onclick="startCall()">
+                    📞 Start Call
+                </button>
+                <button class="action-btn btn-hangup" id="btnHangup" onclick="endCall()" disabled>
+                    📵 Hang Up
+                </button>
+            </div>
+        </div>
+
+        <div class="call-history">
+            <div class="history-title">Call Log</div>
+            <div id="callHistory">
+                <div class="history-item">No calls yet</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const API_BASE_URL = 'http://localhost:8000'; // Your FastAPI backend
+        
+        // State
+        let callActive = false;
+        let callStartTime = null;
+        let durationInterval = null;
+        let currentMenu = 'main';
+        let callId = null; 
+        let callLog = [];
+        let voicesLoaded = false; // NEW: Flag to track voice loading
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            setupKeypad();
+            voiceLoadGuard(); // NEW: Attempt to load voices immediately
+        });
+
+        // NEW: Function to force voice loading
+        function voiceLoadGuard() {
+            if ('speechSynthesis' in window) {
+                // If voices are already loaded, set flag and return
+                if (window.speechSynthesis.getVoices().length > 0) {
+                    voicesLoaded = true;
+                    console.log("TTS voices pre-loaded.");
+                    return;
+                }
+                
+                // If not loaded, listen for the event that fires when they are ready
+                window.speechSynthesis.onvoiceschanged = function() {
+                    voicesLoaded = true;
+                    console.log("TTS voices loaded via onvoiceschanged event.");
+                    // Remove listener after first successful load
+                    window.speechSynthesis.onvoiceschanged = null; 
+                };
+            } else {
+                console.warn("Speech Synthesis not supported in this browser.");
+                voicesLoaded = true; // Set to true to bypass checks
+            }
+        }
+
+
+        // Setup keypad click handlers
+        function setupKeypad() {
+            const keys = document.querySelectorAll('.key');
+            keys.forEach(key => {
+                key.addEventListener('click', function() {
+                    if (callActive) {
+                        const digit = this.getAttribute('data-key');
+                        handleKeyPress(digit);
+                    }
+                });
+            });
+        }
+
+        // --- Core Functions: API Communication ---
+
+        // 🟢 Start call (Connects to FastAPI /ivr/start)
+        async function startCall() {
+            // Cancel any previous speech that might be stuck
+            if ('speechSynthesis' in window) {
+                 window.speechSynthesis.cancel();
+            }
+
+            try {
+                // Clear old output
+                document.getElementById('ivrOutput').innerHTML = '';
+                
+                const callerNumber = document.querySelector('.caller-number').textContent; 
+
+                // 1. API Call: /ivr/start
+                const response = await fetch(`${API_BASE_URL}/ivr/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ caller_number: callerNumber, call_id: null })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API call failed with status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                callId = data.call_id; 
+                currentMenu = 'main'; 
+
+                // 2. Update UI/State
+                callActive = true;
+                callStartTime = Date.now();
+                document.getElementById('statusIcon').textContent = '📞';
+                document.getElementById('statusText').textContent = 'Call Connected';
+                document.getElementById('btnCall').disabled = true;
+                document.getElementById('btnHangup').disabled = false;
+                document.getElementById('keypad').style.opacity = '1';
+                document.getElementById('keypad').style.pointerEvents = 'auto';
+
+                // Start call duration timer
+                durationInterval = setInterval(updateCallDuration, 1000);
+
+                // Log and Speak the prompt returned by the backend
+                logCall('Outgoing', 'Connected');
+                await speakText(data.prompt);
+
+            } catch (error) {
+                console.error('Error starting call:', error);
+                document.getElementById('statusText').textContent = 'Call Failed (Check Python Server)';
+                logCall('Outgoing', 'Failed');
+            }
+        }
+
+        // 🔢 Handle key press (Connects to FastAPI /ivr/dtmf)
+        async function handleKeyPress(digit) {
+            if (!callActive || !callId) return;
+
+            // Cancel any currently speaking text before processing the new keypress
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+            }
+
+            // Visual feedback
+            playBeep();
+            addToOutput(`[You pressed: ${digit}]`);
+
+            try {
+                // 1. API Call: /ivr/dtmf
+                const response = await fetch(`${API_BASE_URL}/ivr/dtmf`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        call_id: callId,
+                        digit: digit,
+                        current_menu: currentMenu
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`DTMF API call failed with status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                console.log('DTMF Response:', data);
+
+                // 2. Process Backend Response
+                if (data.status === 'call_ended' || data.status === 'transferring' || data.status === 'pnr_found') {
+                    // Call ends after action
+                    await speakText(data.message);
+                    endCall(true); 
+                } else if (data.status === 'processed' || data.status === 'invalid' || data.status === 'invalid_pnr' || data.status === 'collecting') {
+                    
+                    // Update menu state if the backend returned a new one
+                    if (data.current_menu) {
+                        currentMenu = data.current_menu;
+                    }
+                    
+                    // Speak the response message
+                    if (data.message) {
+                        await speakText(data.message);
+                    }
+                    
+                    // Speak the next menu's prompt if provided (for goto_menu action)
+                    if (data.prompt) {
+                        await wait(500); // Small pause before next prompt
+                        await speakText(data.prompt);
+                    }
+                } else {
+                    await speakText("System error. Ending call.");
+                    endCall(true);
+                }
+
+            } catch (error) {
+                console.error('Error handling DTMF:', error);
+                await speakText("A connection error occurred. Ending call.");
+                endCall(true);
+            }
+        }
+
+        // --- Utility Functions ---
+
+        // 📵 End call
+        function endCall(isSystemEnd = false) {
+            callActive = false;
+            
+            // Cancel all speech before hanging up
+            if ('speechSynthesis' in window) {
+                 window.speechSynthesis.cancel();
+            }
+
+            // Stop call duration timer
+            clearInterval(durationInterval);
+
+            // Get duration for log
+            const duration = callStartTime ? Math.floor((Date.now() - callStartTime) / 1000) : 0;
+            const mins = String(Math.floor(duration/60)).padStart(2, '0');
+            const secs = String(duration % 60).padStart(2, '0');
+
+            // Log call and Update UI
+            document.getElementById('statusIcon').textContent = '📵';
+            document.getElementById('statusText').textContent = isSystemEnd ? 'Call Terminated' : 'Call Ended (User Hangup)';
+            document.getElementById('btnCall').disabled = false;
+            document.getElementById('btnHangup').disabled = true;
+            document.getElementById('keypad').style.opacity = '0.5';
+            document.getElementById('keypad').style.pointerEvents = 'none';
+            logCall('Outgoing', `Ended (${mins}:${secs} mins)`);
+            
+            // Reset state
+            callId = null;
+            callStartTime = null;
+
+            // Reset UI after delay
+            setTimeout(() => {
+                document.getElementById('statusIcon').textContent = '📞';
+                document.getElementById('statusText').textContent = 'Ready to Call';
+                document.getElementById('callDuration').textContent = '00:00';
+                document.getElementById('ivrOutput').innerHTML = '<p style="opacity: 0.7;">Press "Start Call" to begin...</p>';
+                currentMenu = 'main';
+            }, 3000);
+        }
+
+        // Update call duration
+        function updateCallDuration() {
+            if (!callStartTime) return;
+            
+            const seconds = Math.floor((Date.now() - callStartTime) / 1000);
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            
+            document.getElementById('callDuration').textContent = 
+                `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+
+        // 🔊 Speak text (Uses Browser's Text-to-Speech for audible output)
+        async function speakText(text) {
+            const outputDiv = document.getElementById('ivrOutput');
+            const speakingIndicator = document.getElementById('speakingIndicator');
+
+            // 1. SIMULATION UI UPDATES
+            speakingIndicator.classList.add('active');
+            const p = document.createElement('p');
+            p.textContent = `🔊 IVR: ${text}`;
+            outputDiv.appendChild(p);
+            outputDiv.scrollTop = outputDiv.scrollHeight;
+            
+            // If TTS is not supported or voices not loaded, use a time-based fallback
+            if (!('speechSynthesis' in window) || !voicesLoaded) {
+                 console.warn("TTS not ready or supported. Simulating delay.");
+                 const duration = text.length * 50; 
+                 return new Promise(resolve => {
+                     setTimeout(() => {
+                         speakingIndicator.classList.remove('active');
+                         resolve();
+                     }, duration < 1000 ? 1000 : duration); 
+                 });
+            }
+
+
+            // 2. TEXT-TO-SPEECH IMPLEMENTATION (if supported and loaded)
+            return new Promise((resolve) => {
+                // We use cancel() in the calling functions (startCall/handleKeyPress)
+                
+                const utterance = new window.SpeechSynthesisUtterance(text);
+                
+                // Set up event handlers
+                utterance.onend = function() {
+                    speakingIndicator.classList.remove('active');
+                    resolve();
+                };
+
+                utterance.onerror = function(event) {
+                    console.error('SpeechSynthesisUtterance.onerror', event);
+                    // Fallback to time-based simulation if speech fails
+                    speakingIndicator.classList.remove('active');
+                    setTimeout(resolve, text.length * 50); 
+                };
+
+                window.speechSynthesis.speak(utterance);
+            });
+        }
+
+        // Add text to output
+        function addToOutput(text) {
+            const outputDiv = document.getElementById('ivrOutput');
+            const p = document.createElement('p');
+            p.textContent = text;
+            p.style.color = '#4ecca3';
+            outputDiv.appendChild(p);
+            outputDiv.scrollTop = outputDiv.scrollHeight;
+        }
+
+        // Play DTMF beep sound (simulated)
+        function playBeep() {
+            console.log('DTMF tone played');
+        }
+
+        // Log call
+        function logCall(type, status) {
+            const time = new Date().toLocaleTimeString();
+            const logEntry = `${time} - ${type} - ${status}`;
+            callLog.unshift(logEntry);
+            
+            const historyDiv = document.getElementById('callHistory');
+            historyDiv.innerHTML = callLog.slice(0, 5).map(entry => 
+                `<div class="history-item">${entry}</div>`
+            ).join('');
+        }
+
+        // Utility: Wait
+        function wait(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+    </script>
+</body>
+</html>
