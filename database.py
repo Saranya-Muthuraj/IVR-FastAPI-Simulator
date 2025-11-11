@@ -1,5 +1,5 @@
 # database.py
-# (v2) - Production-Ready Version
+# (v3) - The Corrected Production Version
 
 import os
 from sqlalchemy import create_engine
@@ -9,23 +9,31 @@ from sqlalchemy.schema import Column
 from sqlalchemy.types import String, Integer, DateTime, JSON
 
 # 1. GET THE DATABASE URL
-#    - It looks for a "DATABASE_URL" environment variable (for production on Render)
-#    - If it doesn't find one, it uses a local "ivr.db" file (for development)
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    # Fix for SQLAlchemy: "postgres://" needs to be "postgresql://"
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+# --- THIS IS THE FIX ---
+# Check if the URL is for PostgreSQL (it might start with "postgres://" or "postgresql://")
+if DATABASE_URL and DATABASE_URL.startswith("postgres"):
+    # It's a Postgres URL.
+    # Make sure it uses the "postgresql://" protocol that SQLAlchemy requires.
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    
+    # If it's already "postgresql://", this code does nothing, which is correct.
 else:
-    # Use SQLite locally
+    # It's either empty or not a Postgres URL, so use SQLite for local dev
+    print(">>> DATABASE_URL not found or invalid. Defaulting to local SQLite file.")
     DATABASE_URL = "sqlite:///./ivr.db"
+# --- END OF FIX ---
+
 
 # 2. CREATE THE ENGINE
-#    - For SQLite, we need "check_same_thread"
-#    - For PostgreSQL (production), we don't.
 if DATABASE_URL.startswith("sqlite"):
+    print(">>> Using local SQLite database.")
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 else:
+    # This will now correctly print that it's using Postgres
+    print(f">>> Using live PostgreSQL database.")
     engine = create_engine(DATABASE_URL)
 
 # 3. STANDARD SESSION SETUP
@@ -33,7 +41,6 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 # 4. DATABASE MODELS (Your tables)
-#    (These are the same as before)
 class Booking(Base):
     __tablename__ = "bookings"
     id = Column(Integer, primary_key=True, index=True)
@@ -67,8 +74,8 @@ class CallHistory(Base):
     inputs = Column(JSON)
 
 # 5. CREATE TABLES
-#    This line will create the tables when the app first runs
-Base.metadata.create_all(bind=engine)
+# (This is no longer needed here, your main app does it on startup)
+# Base.metadata.create_all(bind=engine) 
 
 # 6. DEPENDENCY (Unchanged)
 def get_db():
