@@ -74,7 +74,6 @@ app = FastAPI(title="IVR Simulator Backend", version="3.3.0 (NLU/Star-Key Fix)")
 @app.on_event("startup")
 def on_startup():
     print("--- Server starting up ---")
-    Base.metadata.create_all(bind=engine)
     setup_database()
     print("--- Startup complete. Server is ready. ---")
 # Enable CORS
