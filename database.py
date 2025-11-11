@@ -1,27 +1,19 @@
 # database.py
-# (v3) - The Corrected Production Version
+# (v4) - Production-Ready Version with State in CallHistory
 
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, Column, String, Integer, DateTime, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.schema import Column
-from sqlalchemy.types import String, Integer, DateTime, JSON
 
 # 1. GET THE DATABASE URL
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# --- THIS IS THE FIX ---
-# Check if the URL is for PostgreSQL (it might start with "postgres://" or "postgresql://")
+# --- THIS IS THE FIX for postgres:// vs postgresql:// ---
 if DATABASE_URL and DATABASE_URL.startswith("postgres"):
-    # It's a Postgres URL.
-    # Make sure it uses the "postgresql://" protocol that SQLAlchemy requires.
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-    
-    # If it's already "postgresql://", this code does nothing, which is correct.
 else:
-    # It's either empty or not a Postgres URL, so use SQLite for local dev
     print(">>> DATABASE_URL not found or invalid. Defaulting to local SQLite file.")
     DATABASE_URL = "sqlite:///./ivr.db"
 # --- END OF FIX ---
@@ -32,7 +24,6 @@ if DATABASE_URL.startswith("sqlite"):
     print(">>> Using local SQLite database.")
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 else:
-    # This will now correctly print that it's using Postgres
     print(f">>> Using live PostgreSQL database.")
     engine = create_engine(DATABASE_URL)
 
@@ -63,21 +54,35 @@ class FrequentFlyer(Base):
     name = Column(String(100))
     points = Column(Integer)
 
+# --- UPDATED CallHistory Table ---
+# We add all the fields that were previously in the in-memory `active_calls` dict
 class CallHistory(Base):
     __tablename__ = "call_history"
+    
+    # Core Info
     id = Column(Integer, primary_key=True, index=True)
     call_id = Column(String(50), unique=True, index=True)
     caller_number = Column(String(20))
     start_time = Column(DateTime)
-    end_time = Column(DateTime)
-    menu_path = Column(JSON)
-    inputs = Column(JSON)
+    end_time = Column(DateTime, nullable=True) # A call that is not ended will have NULL here
+    
+    # State Info
+    current_menu = Column(String(50), default='main')
+    input_buffer = Column(String(100), default='')
+    menu_path = Column(JSON, default=[])
+    inputs = Column(JSON, default=[])
+    
+    # PNR/FF State
+    active_pnr = Column(String(10), nullable=True)
+    active_ff_number = Column(String(10), nullable=True)
+    
+    # Booking Wizard State
+    booking_flight = Column(String(20), nullable=True)
+    booking_name = Column(String(100), nullable=True)
+    booking_age = Column(Integer, nullable=True)
+    booking_gender = Column(String(20), nullable=True)
 
-# 5. CREATE TABLES
-# (This is no longer needed here, your main app does it on startup)
-# Base.metadata.create_all(bind=engine) 
-
-# 6. DEPENDENCY (Unchanged)
+# 5. DEPENDENCY (Unchanged)
 def get_db():
     db = SessionLocal()
     try:
