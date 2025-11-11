@@ -69,18 +69,13 @@ def setup_database():
     finally:
         db.close()
 
-if __name__ == "__main__":
-    print("Setting up database...")
-    setup_database()
-    print("Database setup complete. You can now run your FastAPI app.")
-
 app = FastAPI(title="IVR Simulator Backend", version="3.3.0 (NLU/Star-Key Fix)")
 
 @app.on_event("startup")
 def on_startup():
     print("--- Server starting up ---")
     Base.metadata.create_all(bind=engine)
-    populate_database()
+    setup_database()
     print("--- Startup complete. Server is ready. ---")
 # Enable CORS
 app.add_middleware(
