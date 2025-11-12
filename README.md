@@ -1,92 +1,238 @@
-# 📞 IVR Integration Layer Simulator
+# 📞 IVR Simulator — FastAPI + HTML Frontend
 
-This project serves as a comprehensive simulator for **Integration Layer Development**. Its objective is to demonstrate a middleware (API layer) that connects a legacy Interactive Voice Response (IVR) system's VXML logic to a modern Conversational AI stack (simulated by the FastAPI backend).
-
-The simulator is split into a Python backend (the API/middleware) and a browser-based frontend (the IVR client/phone simulator).
-
----
-
-## 🚀 Project Components
-
-| Component | Technology | Description |
-| :--- | :--- | :--- |
-| **Backend API (Middleware)** | **Python / FastAPI** | Simulates the core IVR business logic (menus, actions, call state) and exposes REST endpoints (`/ivr/start`, `/ivr/dtmf`) that the client calls. This acts as the translation layer between the legacy IVR and the AI stack. |
-| **Frontend Client** | **HTML / JavaScript** | A visual phone simulator that initiates calls and sends DTMF inputs. It consumes the FastAPI API, and uses the browser's Web Speech API for audible voice prompts. |
+> **Interactive Voice Response (IVR) System Simulator**  
+> Built with **FastAPI**, **SQLAlchemy**, and a realistic **HTML frontend** that simulates DTMF keypresses, speech recognition, and text-to-speech for a lifelike airline call experience.
 
 ---
 
-## 🛠️ Setup and Installation
+## 🧩 Project Overview
 
-Follow these steps to get the system running locally:
+This project simulates an **Air India-style IVR system** with:
+- A backend (`FastAPI`) handling call logic, state management, and database storage.
+- A frontend (`HTML + JS`) emulating a smartphone UI to interact with the backend.
+- Persistent call states stored in the database (`SQLite` or `PostgreSQL`).
 
-### 1. Clone the Repository (If starting fresh, skip to 2)
+It demonstrates **end-to-end integration** between speech, API processing, and database-backed menu flow.
 
+---
 
-```Bash
+## 📂 Files in this Repository
 
-git clone https://github.com/YOUR_GITHUB_USERNAME/REPOSITORY_NAME.gitcd REPOSITORY_NAME
+| File | Description |
+|------|--------------|
+| `ivr_simulator_backend.py` | FastAPI backend app with all IVR logic and database handling |
+| `database.py` | SQLAlchemy models, database setup, and session dependency |
+| `ivr_simulator.html` | Frontend simulator with keypad, microphone, and live call interface |
+| `requirements.txt` | Python dependencies for backend deployment |
 
+---
+
+## ✨ Features
+
+✅ Persistent call state saved in the database (multi-worker safe)  
+✅ Realistic IVR menu navigation via DTMF and speech input  
+✅ Automatic seeding of mock booking (PNR) and frequent flyer data  
+✅ Fully functional Text-to-Speech (TTS) and Speech-to-Text (STT) via browser APIs  
+✅ SQLite (local) and PostgreSQL (production) compatible  
+✅ Deployed and accessible via Render.com  
+
+---
+
+## 🧠 Prerequisites
+
+- Python **3.10+**
+- Modern browser (Chrome recommended for best TTS/STT support)
+- Optional: PostgreSQL database for production
+
+---
+
+## ⚙️ Environment Variables
+
+| Variable | Description | Default |
+|-----------|--------------|----------|
+| `DATABASE_URL` | SQLAlchemy connection string (`postgresql://` or `sqlite:///`) | `sqlite:///./ivr.db` |
+
+> The backend automatically converts `postgres://` → `postgresql://` for compatibility with psycopg2.
+
+---
+
+## 📦 Installation
+
+```bash
+# 1. Create a virtual environment
+python -m venv .venv
+source .venv/bin/activate     # macOS/Linux
+.venv\Scripts\activate        # Windows
+
+# 2. Install dependencies
+pip install -r requirements.txt
 ```
 
+## 🗃️ Database & Data Seeding
 
-### 2. Install Python Dependencies
+When the server starts, it will:
 
-This project requires Python 3.7+ and the following libraries:
+- Automatically create the tables (`Booking`, `FrequentFlyer`, `CallHistory`)
+- Preload mock booking and frequent flyer data
 
+---
 
-```Bash
+### 🧱 Database Schema Includes
 
-# Install FastAPI, Uvicorn (ASGI server), and Pydantic
-pip install fastapi uvicorn pydantic
+- **Booking** → Passenger & flight details (PNR)
+- **FrequentFlyer** → Frequent flyer numbers, PINs, and points
+- **CallHistory** → Call state (menus, input buffers, timestamps, etc.)
 
+---
+
+## 🚀 Run Locally
+
+### Start the backend
+
+```bash
+uvicorn ivr_simulator_backend:app --reload --host 0.0.0.0 --port 8000
 ```
 
+By default, it uses: `sqlite:///./ivr.db`.
 
-### 3. Start the Backend API (Integration Layer)
+---
 
-Start the Python server. This will run the API on `http://localhost:8000`.
+### 🖥️ Open the Frontend
 
+1. Open `ivr_simulator.html` in your browser.  
+2. Update the API base URL (optional) inside the script if you’re running locally:
 
-```Bash
+   ```js
+   const API_BASE_URL = 'http://localhost:8000';
+   ```
+3.Press the green button to start a simulated call 🎧
 
-python -m uvicorn ivr_simulator_backend:app --reload
+---
+## 🧭 API Endpoints Overview
 
+| Method | Endpoint             | Description                         |
+|--------|----------------------|-------------------------------------|
+| `GET`  | `/`                  | Health check + DB info              |
+| `POST` | `/ivr/start`         | Start a new IVR session             |
+| `POST` | `/ivr/dtmf`          | Handle keypad digit input           |
+| `POST` | `/ivr/process_voice` | Handle voice (speech-to-text) input |
+| `POST` | `/ivr/end`           | End or hang up a call               |
+
+---
+
+## 🖥️ Frontend (ivr_simulator.html)
+
+A modern, smartphone-style simulator featuring:
+
+- DTMF keypad with **0–9**, `*`, and `#`
+- **Start** (green), **Speak** (blue), and **Hangup** (red) buttons
+- IVR conversation bubbles with realistic **speech synthesis (TTS)**
+- Integrated **browser microphone** support for speech commands
+
+---
+
+### 🎮 Quick Demo Actions
+
+| Action | Command |
+|--------|----------|
+| Flight Status | Press `1` |
+| Manage Booking | Press `2` |
+| Book Flight | Say “Book Flight” |
+| Connect to Agent | Say “Agent” |
+
+---
+## 🧪 Example (Using cURL)
+
+```bash
+# Start call
+curl -X POST http://localhost:8000/ivr/start \
+  -H "Content-Type: application/json" \
+  -d '{"caller_number":"+911234567890"}'
+
+# Send DTMF
+curl -X POST http://localhost:8000/ivr/dtmf \
+  -H "Content-Type: application/json" \
+  -d '{"call_id":"CALL_123456","digit":"1","current_menu":"main"}'
+
+# Send voice input
+curl -X POST http://localhost:8000/ivr/process_voice \
+  -H "Content-Type: application/json" \
+  -d '{"call_id":"CALL_123456","text":"flight status","current_menu":"main"}'
+
+# End call
+curl -X POST http://localhost:8000/ivr/end \
+  -H "Content-Type: application/json" \
+  -d '{"call_id":"CALL_123456"}'
 ```
+## 🌐 Live Deployment (Render)
 
-**Note:** Keep this terminal window open while testing the application.
-
----
-
-## ▶️ How to Run the Simulator
-
-1.Ensure the **Backend API** is running in your terminal window (as described above).
-
-2.Open the `ivr_simulator.html` file directly in a modern web browser (e.g., Chrome, Firefox, Edge) by double-clicking the file.
-
-### Testing the Flow
-
-1.Click the 📞 **Start Call** button on the simulator.
-
-2.The browser should begin speaking the main menu prompt (e.g., "Welcome to Air India Airlines...").
-
-3.Press the **keypad buttons (1, 2, 9)** to navigate the IVR menu structure defined in `ivr_simulator_backend.py`.
-
-4.Observe the API calls and responses logged in the **Python terminal** and the updates on the **simulator screen**.
+This project is deployed on **Render.com** for live testing.
 
 ---
 
-## ✅ Deliverables Met
+### 🔗 Live URLs
 
-This simulator successfully addresses the core objectives of the Integration Layer Development module:
-
-* **Design and implement connectors or APIs to enable communication between VXML and ACS/BAP:** The `/ivr/start` and `/ivr/dtmf` API endpoints fulfill this requirement by providing a standardized interface for IVR input/output.
-
-* **Ensure real-time data handling and system compatibility:** The FastAPI application handles real-time state management (storing `call_id`, `current_menu`, etc.) for each active session.
-
-* **Validate integration layer with sample transaction and flow testing:** The HTML client enables interactive end-to-end testing of the defined IVR paths (e.g., booking enquiry, flight status lookup).
+- **Backend (FastAPI)** → [https://ivr-fastapi-simulator.onrender.com](https://ivr-fastapi-simulator.onrender.com)  
+- **Frontend (HTML)** → Open `ivr_simulator.html` locally  
+  > It already connects to the live API above.
 
 ---
 
-## 📝 License
+## 🧰 Render Setup
 
-This project is licensed under the MIT License. (You can change this if needed)
+1. **Create a new Web Service** on [Render](https://render.com)  
+2. **Connect this GitHub repository**  
+3. **Set the Start Command:**
+
+   ```bash
+   gunicorn -w 4 -k uvicorn.workers.UvicornWorker ivr_simulator_backend:app
+   ```
+4.**Add environment variable**
+
+   ```bash
+   DATABASE_URL=sqlite:///./ivr.db
+   ```
+5.**Or use your PostgreSQL URL:**
+
+   ```bash
+   DATABASE_URL=postgresql://user:password@host:port/dbname
+   ```
+Render will automatically build, deploy, and expose your app at:
+
+  ```bash
+   https://<your-app-name>.onrender.com
+   ```
+---
+
+## ⚠️ Troubleshooting
+
+| Issue | Possible Cause | Solution |
+|--------|----------------|-----------|
+| **TTS/STT not working** | Browser doesn’t support speech APIs | Use Chrome or Edge and allow microphone access |
+| **“Call not found” error** | Wrong `API_BASE_URL` or expired session | Make sure frontend `API_BASE_URL` matches backend host |
+| **Postgres connection error** | Invalid or missing `DATABASE_URL` | Ensure `DATABASE_URL` is correctly set — note that Render uses `postgres://`, which is automatically fixed to `postgresql://` |
+
+---
+
+## 🧑‍💻 Contributing
+
+Contributions are welcome!  
+You can help improve the project by:
+
+- Extending IVR flows in `MENU_STRUCTURE`
+- Adding new menus or DB-backed features
+- Updating documentation or improving frontend visuals
+
+---
+
+## 🪪 License
+
+This project is provided for **educational and demonstration** purposes.  
+You are free to **use**, **modify**, and **deploy** it for learning or non-commercial use.
+
+---
+
+## 💬 Author
+
+**Developed by [Saranya Muthuraj](#)**  
+> IVR Simulation using **FastAPI + SQLAlchemy + HTML Speech API**
