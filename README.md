@@ -172,10 +172,8 @@ This project is deployed on **Render.com** for live testing.
 
 ### 🔗 Live URLs
 
-- **Backend (FastAPI)** → [https://ivr-fastapi-simulator.onrender.com](https://ivr-fastapi-simulator.onrender.com)  
-- **Frontend (HTML)** → Open `ivr_simulator.html` locally  
-  > It already connects to the live API above.
-
+- **Backend (FastAPI)** → [https://ivr-fastapi-simulator.onrender.com](https://ivr-fastapi-simulator.onrender.com)
+- **Frontend (HTML)** → [https://ivr-frontend-zuk0.onrender.com](https://ivr-frontend-zuk0.onrender.com)
 ---
 
 ## 🧰 Render Setup
