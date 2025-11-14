@@ -1,33 +1,43 @@
 # database.py
-# (v4) - Production-Ready Version with State in CallHistory
+# (v5) - FINAL Test-Aware Version
 
 import os
 from sqlalchemy import create_engine, Column, String, Integer, DateTime, JSON
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base  # <-- Use this
 from sqlalchemy.orm import sessionmaker
+from datetime import datetime
 
 # 1. GET THE DATABASE URL
 DATABASE_URL = os.environ.get("DATABASE_URL")
+TESTING = os.environ.get("TESTING") == "true" # <--- NEW: Check for test mode
 
-# --- THIS IS THE FIX for postgres:// vs postgresql:// ---
-if DATABASE_URL and DATABASE_URL.startswith("postgres"):
+# --- THIS IS THE NEW LOGIC ---
+if TESTING:
+    # If we are testing, ALWAYS use an in-memory database
+    print(">>> RUNNING IN TEST MODE: Using in-memory SQLite database.")
+    DATABASE_URL = "sqlite:///:memory:"
+elif DATABASE_URL and DATABASE_URL.startswith("postgres"):
+    # This is for production (Render)
+    print(">>> RUNNING IN PRODUCTION MODE: Using PostgreSQL database.")
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 else:
-    print(">>> DATABASE_URL not found or invalid. Defaulting to local SQLite file.")
+    # This is for running locally (e.g., uvicorn main:app)
+    print(">>> DATABASE_URL not found. Defaulting to local SQLite file 'ivr.db'.")
     DATABASE_URL = "sqlite:///./ivr.db"
-# --- END OF FIX ---
+# --- END OF NEW LOGIC ---
 
 
 # 2. CREATE THE ENGINE
+# This engine will now be correct for all 3 modes (Test, Prod, Local)
 if DATABASE_URL.startswith("sqlite"):
-    print(">>> Using local SQLite database.")
+    print(">>> Using SQLite database.")
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 else:
     print(f">>> Using live PostgreSQL database.")
     engine = create_engine(DATABASE_URL)
 
-# 3. STANDARD SESSION SETUP
+# 3. STANDARD SESSION SETUP (This is now correct)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -55,7 +65,6 @@ class FrequentFlyer(Base):
     points = Column(Integer)
 
 # --- UPDATED CallHistory Table ---
-# We add all the fields that were previously in the in-memory `active_calls` dict
 class CallHistory(Base):
     __tablename__ = "call_history"
     
@@ -63,14 +72,18 @@ class CallHistory(Base):
     id = Column(Integer, primary_key=True, index=True)
     call_id = Column(String(50), unique=True, index=True)
     caller_number = Column(String(20))
-    start_time = Column(DateTime)
-    end_time = Column(DateTime, nullable=True) # A call that is not ended will have NULL here
+    start_time = Column(DateTime, default=datetime.now)
+    end_time = Column(DateTime, nullable=True)
     
     # State Info
     current_menu = Column(String(50), default='main')
     input_buffer = Column(String(100), default='')
-    menu_path = Column(JSON, default=[])
-    inputs = Column(JSON, default=[])
+    
+    # --- THIS IS THE BUG FIX ---
+    # Use default=lambda: [] to create a new list for every row
+    menu_path = Column(JSON, default=lambda: ["main"])
+    inputs = Column(JSON, default=list)
+    # --- END BUG FIX ---
     
     # PNR/FF State
     active_pnr = Column(String(10), nullable=True)
@@ -82,7 +95,7 @@ class CallHistory(Base):
     booking_age = Column(Integer, nullable=True)
     booking_gender = Column(String(20), nullable=True)
 
-# 5. DEPENDENCY (Unchanged)
+# 5. DEPENDENCY
 def get_db():
     db = SessionLocal()
     try:
