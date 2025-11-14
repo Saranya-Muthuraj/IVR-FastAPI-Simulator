@@ -77,11 +77,6 @@ async def lifespan(app: FastAPI):
     # This is the code that runs ON STARTUP
     if os.environ.get("TESTING") != "true":
         print("--- Server starting up (Production Mode) ---")
-
-        print("!!!!!! DATABASE-AH RESET PANDROM (ONE-TIME FIX) !!!!!!")
-        Base.metadata.drop_all(bind=engine)
-        print("!!!!!! DATABASE RESET AAGIDUCHU !!!!!!")
-
         
         setup_database() # <--- Your database setup function
         print("--- Startup complete. Server is ready. ---")
