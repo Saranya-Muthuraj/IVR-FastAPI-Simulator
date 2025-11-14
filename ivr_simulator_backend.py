@@ -308,9 +308,11 @@ MENU_STRUCTURE = {
     }
 }
 
-# ==================== HELPER FUNCTIONS (DATABASE) (Unchanged) ====================
+# ==================== HELPER FUNCTIONS (DATABASE) ====================
 
+# --- NEW: Fetches the call state from DB ---
 def get_active_call(call_id: str, db: Session):
+    """Fetches the active call from the CallHistory table."""
     call = db.query(CallHistory).filter(CallHistory.call_id == call_id).first()
     
     if not call:
@@ -323,29 +325,36 @@ def get_active_call(call_id: str, db: Session):
         
     return call
 
+# --- UPDATED: No longer uses in-memory dict ---
 def end_call_logic(db: Session, call_id_to_end, status_msg=""):
+    """Fetches the call from the DB and marks it as ended."""
     call_to_end = db.query(CallHistory).filter(CallHistory.call_id == call_id_to_end).first()
     
-    if call_to_end and not call_to_end.end_time: 
+    if call_to_end and not call_to_end.end_time: # Check it hasn't already been ended
         call_to_end.end_time = datetime.now()
         
         if status_msg:
+            # Handle JSON fields
             new_inputs = list(call_to_end.inputs)
             new_inputs.append(status_msg)
             call_to_end.inputs = new_inputs
             
-        db.commit() 
+        db.commit() # <--- Save the end_time
         print(f"✅ Call {call_id_to_end} marked as ended in DB.")
     elif not call_to_end:
         print(f"Error: Tried to end call {call_id_to_end} but it was not in DB.")
     else:
+        # This can happen if the frontend and backend both try to end the call
         print(f"Info: Tried to end call {call_id_to_end} but it was already ended.")
 
 
+# --- UPDATED: Type hint is now CallHistory ---
 def _go_to_menu(call: CallHistory, target_menu: str, message: Optional[str] = None):
+    """Helper to transition the call state to a new menu."""
     call.current_menu = target_menu
     
-    new_path = list(call.menu_path)
+    # Handle JSON field update
+    new_path = list(call.menu_path) # Make a copy
     new_path.append(target_menu)
     call.menu_path = new_path
     
@@ -357,20 +366,23 @@ def _go_to_menu(call: CallHistory, target_menu: str, message: Optional[str] = No
     }
     return response
 
-# ==================== ENDPOINTS (Unchanged from v4) ====================
+# ==================== ENDPOINTS ====================
 
 @app.get("/")
 def root(db: Session = Depends(get_db)): 
+    """Health check"""
     try:
         booking_count = db.query(Booking).count()
         ff_count = db.query(FrequentFlyer).count()
         history_count = db.query(CallHistory).count()
+        
+        # Check active calls by querying DB
         active_call_count = db.query(CallHistory).filter(CallHistory.end_time == None).count()
         
         return {
             "status": "IVR Simulator Running",
             "database_status": "Connected",
-            "live_active_calls_in_db": active_call_count,
+            "live_active_calls_in_db": active_call_count, # <--- Changed
             "total_completed_calls_in_db": history_count,
             "total_bookings_in_db": booking_count,
             "total_ff_accounts_in_db": ff_count
@@ -380,18 +392,23 @@ def root(db: Session = Depends(get_db)):
         return {"status": "IVR Simulator Running", "database_status": "Error - Not Connected"}
 
 
+# --- UPDATED: Saves call to DB ---
 @app.post("/ivr/start")
-def start_call(call_data: CallStart, db: Session = Depends(get_db)):
+def start_call(call_data: CallStart, db: Session = Depends(get_db)): # <--- Add db session
+
     call_id = f"CALL_{random.randint(100000, 999999)}"
 
+    # Create the new call state IN THE DATABASE
     new_call = CallHistory(
         call_id=call_id,
         caller_number=call_data.caller_number,
         start_time=datetime.now()
+        # All other fields (current_menu, input_buffer, etc.)
+        # will use the defaults you defined in database.py
     )
     
     db.add(new_call)
-    db.commit()
+    db.commit() # <--- Save the new call to the DB
 
     print(f"\n📞 NEW CALL: {call_id} from {call_data.caller_number} (Saved to DB)")
 
@@ -401,16 +418,27 @@ def start_call(call_data: CallStart, db: Session = Depends(get_db)):
         "prompt": MENU_STRUCTURE["main"]["prompt"]
     }
 
+# ==========================================================
+# ##### UPDATED handle_voice_input (NLU FIX + DB STATE) #####
+# ==========================================================
 @app.post("/ivr/process_voice")
 async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_db)): 
+    """
+    MODERNIZATION LAYER:
+    Accepts natural language text, maps it to legacy IVR logic.
+    """
     call_id = input_data.call_id
     text = input_data.text.lower()
     
+    # --- NEW: Get call from DB ---
     call = get_active_call(call_id, db)
-    original_menu = call.current_menu
+    # --- END NEW ---
+    
+    original_menu = call.current_menu # Get menu from DB
 
     print(f"\n🗣️ VOICE INPUT: Call {call_id}, Menu: {original_menu}, Text: {text}")
 
+    # --- NLU (Natural Language Understanding) Simulation ---
     pnr_input_menus = ["flight_status_pnr", "manage_booking_pnr", "check_in_pnr_for_checkin", "check_in_pnr_for_boardingpass", "refunds_pnr_for_status", "refunds_pnr_for_receipt"]
     ff_number_menu = "frequent_flyer_number"
     ff_pin_menu = "frequent_flyer_pin"
@@ -515,17 +543,18 @@ async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_d
                 return age
         return None
 
+    # --- NLU PROCESSING ---
     if original_menu in pnr_input_menus:
         numeric_pnr = map_spoken_pnr(text) 
         if numeric_pnr:
-            call.input_buffer = numeric_pnr
+            call.input_buffer = numeric_pnr # <--- UPDATE DB OBJECT
             dtmf_input = DTMFInput(call_id=call_id, digit="#", current_menu=original_menu)
             return await handle_dtmf(dtmf_input, db) 
 
     elif original_menu == booking_flight_menu:
         flight_num_str = map_spoken_flight_number(text)
         if flight_num_str:
-            call.input_buffer = flight_num_str
+            call.input_buffer = flight_num_str # <--- UPDATE DB OBJECT
             dtmf_input = DTMFInput(call_id=call_id, digit="#", current_menu=original_menu)
             return await handle_dtmf(dtmf_input, db)
 
@@ -537,7 +566,7 @@ async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_d
         name = cleaned_name.strip().title()
         
         if name:
-            call.booking_name = name
+            call.booking_name = name # <--- UPDATE DB OBJECT
             response = _go_to_menu(call, "booking_ask_age", f"Passenger name set as {name}.")
             db.commit() # <--- SAVE CHANGES
             return response
@@ -545,7 +574,7 @@ async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_d
     elif original_menu == booking_age_menu:
         age = map_spoken_age(text)
         if age:
-            call.input_buffer = str(age)
+            call.input_buffer = str(age) # <--- UPDATE DB OBJECT
             dtmf_input = DTMFInput(call_id=call_id, digit="#", current_menu=original_menu)
             return await handle_dtmf(dtmf_input, db)
 
@@ -572,7 +601,7 @@ async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_d
         if data_match:
             data = data_match.group(1)
             print(f"      NLU: Extracted FF Number: {data}")
-            call.input_buffer = data
+            call.input_buffer = data # <--- UPDATE DB OBJECT
             dtmf_input = DTMFInput(call_id=call_id, digit="#", current_menu=original_menu)
             return await handle_dtmf(dtmf_input, db) 
 
@@ -594,7 +623,7 @@ async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_d
         if data_match:
             data = data_match.group(1)
             print(f"      NLU: Extracted PIN: {data}")
-            call.input_buffer = data
+            call.input_buffer = data # <--- UPDATE DB OBJECT
             dtmf_input = DTMFInput(call_id=call_id, digit="#", current_menu=original_menu)
             return await handle_dtmf(dtmf_input, db) 
 
@@ -673,16 +702,24 @@ async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_d
         "prompt_original": MENU_STRUCTURE[original_menu]["prompt"]
     }
 
-# --- REFACTORED: handle_dtmf ---
+# ==========================================================
+# ##### UPDATED handle_dtmf (Star-Key Fix + DB STATE) #####
+# ==========================================================
 @app.post("/ivr/dtmf")
 async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)): 
+    """
+    Process DTMF key press (The Legacy System)
+    """
+
     call_id = input_data.call_id
     digit = input_data.digit
     
-    # --- FETCH STATE FROM DB ---
-    call = get_call_from_db(call_id, db)
-    # We get the menu from the DB, not the user input, for security
-    menu_name_from_db = call.current_menu 
+    # --- NEW: Get call from DB ---
+    call = get_active_call(call_id, db)
+    # --- END NEW ---
+
+    current_menu = call.current_menu 
+    menu_name_from_db = call.current_menu # Use menu from DB
 
     print(f"\n🔢 DTMF INPUT: Call {call_id}, DB Menu: {menu_name_from_db}, Digit: {digit}")
 
@@ -690,47 +727,63 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
     if not menu:
         return {"error": "Invalid menu state"}
 
-    # --- Input buffer logic (Refactored) ---
+    # --- Input buffer logic (UPDATED for Star-Key) ---
     input_required_menus = {
-        "flight_status_pnr": 6, "manage_booking_pnr": 6, "check_in_pnr_for_checkin": 6,
-        "check_in_pnr_for_boardingpass": 6, "frequent_flyer_number": 9, "frequent_flyer_pin": 4,
-        "refunds_pnr_for_status": 6, "refunds_pnr_for_receipt": 6,
-        "booking_ask_flight": -1, "booking_ask_age": -1
+        "flight_status_pnr": 6,
+        "manage_booking_pnr": 6,
+        "check_in_pnr_for_checkin": 6,
+        "check_in_pnr_for_boardingpass": 6,
+        "frequent_flyer_number": 9,
+        "frequent_flyer_pin": 4,
+        "refunds_pnr_for_status": 6,
+        "refunds_pnr_for_receipt": 6,
+        "booking_ask_flight": -1, # <--- Variable length
+        "booking_ask_age": -1 # <--- Variable length
     }
     required_length = input_required_menus.get(menu_name_from_db)
 
     # --- PNR/FF/PIN Input (Fixed length) ---
-    if required_length and required_length > 0 and digit != "#" and digit != "*":
-        call.input_buffer += digit 
+    if required_length and required_length > 0 and digit != "#" and digit != "*": 
+        call.input_buffer += digit # <--- UPDATE DB OBJECT
         buffer_content = call.input_buffer
         prompt_msg = f"You entered {digit}. Continue entering."
+        
         if len(buffer_content) >= required_length:
              prompt_msg = f"You entered {digit}. Press hash to submit."
-        
-        db.commit() # Save buffer to DB
+             
+        db.commit() # <--- SAVE CHANGES
         return { "status": "collecting", "prompt": prompt_msg, "collected": buffer_content, "current_menu": menu_name_from_db }
     
-    # --- Flight Booking/Age Input (Variable length) ---
-    elif required_length == -1 and digit != "#" and digit != "*":
-        call.input_buffer += digit
+    # --- NEW: Flight Booking/Age Input (Variable length) ---
+    elif required_length == -1 and digit != "#" and digit != "*": 
+        call.input_buffer += digit # <--- UPDATE DB OBJECT
         buffer_content = call.input_buffer
-        
-        db.commit() # Save buffer to DB
+        db.commit() # <--- SAVE CHANGES
         return { "status": "collecting", "prompt": f"You entered {digit}. Press hash to submit.", "collected": buffer_content, "current_menu": menu_name_from_db }
 
     
-    # --- Check for hash press with incorrect length ---
+    # --- Check if hash is pressed AND length is incorrect (for fixed-length inputs) ---
     if digit == "#" and required_length and required_length > 0 and len(call.input_buffer) != required_length:
-         error_message = f"Invalid input length. Must be {required_length} digits. Please try again."
-         return _handle_invalid_input(db, call, error_message) # Pass db and call
+          error_message = f"Invalid input length. Must be {required_length} digits. Please try again."
+          # We need to define _handle_invalid_input to work on the 'call' object
+          call.input_buffer = ""
+          db.commit()
+          return {
+              "status": "processed", 
+              "message": error_message,
+              "prompt": MENU_STRUCTURE[menu_name_from_db]["prompt"], 
+              "current_menu": menu_name_from_db
+          }
 
 
     if digit not in menu["options"]:
-         db.commit() # Save any state changes before returning
-         return { "status": "invalid", "prompt": "Invalid option. Please try again.", "current_menu": menu_name_from_db, "valid_options": list(menu["options"].keys()) }
+        invalid_menu_to_use = call.current_menu
+        return { "status": "invalid", "prompt": "Invalid option. Please try again.", "current_menu": invalid_menu_to_use, "valid_options": list(MENU_STRUCTURE[invalid_menu_to_use]["options"].keys()) }
 
-    # Save the input
-    call.inputs = (call.inputs or []) + [digit]
+    # Handle JSON field
+    new_inputs = list(call.inputs)
+    new_inputs.append(digit)
+    call.inputs = new_inputs
 
     option = menu["options"][digit]
     action = option["action"]
@@ -748,12 +801,9 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
     def _find_ff_info(ff_num_to_find):
         return db.query(FrequentFlyer).filter(FrequentFlyer.ff_number == ff_num_to_find).first()
 
-    # --- REFACTORED: _handle_invalid_input ---
-    def _handle_invalid_input(db: Session, call: CallHistory, error_message, repeat_menu=None):
-        call.input_buffer = ""
+    def _handle_invalid_input(error_message, repeat_menu=None):
+        call.input_buffer = "" # <--- Modify DB object
         menu_to_repeat = repeat_menu if repeat_menu else menu_name_from_db
-        
-        db.commit() # Save cleared buffer
         
         return {
             "status": "processed", 
@@ -762,12 +812,12 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
             "current_menu": menu_to_repeat
         }
 
-    # --- (Action logic) ---
+    # --- (Action logic: goto_menu, end_call, transfer_agent are unchanged) ---
     if action == "goto_menu":
         target_menu = option["target"]
         
+        # <--- NEW: Clear booking data if returning to main
         if target_menu == "main":
-            # Clear all session state
             call.active_pnr = None
             call.active_ff_number = None
             call.booking_flight = None
@@ -778,23 +828,21 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
         if menu_name_from_db in input_required_menus:
              call.input_buffer = ""
 
-        # _go_to_menu helper now handles the db.commit()
-        response = _go_to_menu(db, call, target_menu, message)
+        response = _go_to_menu(call, target_menu, message) # This modifies 'call' object
 
 
     elif action == "end_call":
         response["status"] = "call_ended"
         response["call_action"] = "hangup"
-        # end_call_logic now handles the db.commit()
-        end_call_logic(db, call, f"Call ended with message: {message}") 
+        end_call_logic(db, call.call_id, f"Call ended with message: {message}") 
 
     elif action == "transfer_agent":
         response["status"] = "transferring"
         response["call_action"] = "hangup"
         response["message"] = message
-        end_call_logic(db, call, f"Transferred to agent: {message}") 
+        end_call_logic(db, call.call_id, f"Transferred to agent: {message}") 
         print(f"✅ ACTION: {action} - Sending 'transferring' signal to frontend.")
-        return response # Return early, db is committed in end_call_logic
+        return response
 
     elif action == "lookup_pnr_status":
         pnr_key = call.input_buffer
@@ -802,9 +850,9 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
         pnr_info = _find_pnr_info(pnr_key) 
 
         if pnr_info:
-            pass_name = pnr_info.passenger_name if pnr_info.passenger_name else "N/A"
-            # ... (rest of logic unchanged) ...
-            seats = pnr_info.seats_available
+            pnr_display = pnr_info.pnr_display
+            seats = pnr_info.seats_available 
+
             vacancy_message = ""
             if pnr_info.status == "Cancelled":
                 vacancy_message = "There are no seats available as this flight is cancelled."
@@ -813,18 +861,21 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
             else:
                 vacancy_message = "This flight is currently full."
             
+            pass_name = pnr_info.passenger_name if pnr_info.passenger_name else "N/A"
+
             response["status"] = "pnr_found"
             response["pnr_info"] = { "pnr_display": pnr_info.pnr_display, "flight": pnr_info.flight, "status": pnr_info.status, "route": pnr_info.route, "time": pnr_info.time, "seats_available": seats }
+            
             response["message"] = (
-                f"Your PNR {pnr_info.pnr_display}: Flight {pnr_info.flight} from {pnr_info.route} is {pnr_info.status}. "
+                f"Your PNR {pnr_display}: Flight {pnr_info.flight} from {pnr_info.route} is {pnr_info.status}. "
                 f"Passenger: {pass_name}. "
                 f"{vacancy_message} " 
                 f"This call will now end."
             )
             response["call_action"] = "hangup"
-            end_call_logic(db, call, f"Looked up PNR status: {pnr_info.pnr_display}") 
+            end_call_logic(db, call.call_id, f"Looked up PNR status: {pnr_display}") 
         else:
-            response = _handle_invalid_input(db, call, f"Sorry, PNR {pnr_key} was not found. Please try again.")
+            response = _handle_invalid_input(f"Sorry, PNR {pnr_key} was not found. Please try again.")
 
     elif action == "lookup_pnr_manage":
         pnr_key = call.input_buffer
@@ -832,25 +883,27 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
         pnr_info = _find_pnr_info(pnr_key) 
 
         if pnr_info:
+            pnr_display = pnr_info.pnr_display
             if pnr_info.status == "Cancelled":
-                 response["message"] = f"PNR {pnr_info.pnr_display} is already marked as Cancelled. Returning to main menu."
+                 response["message"] = f"PNR {pnr_display} is already marked as Cancelled. Returning to main menu."
                  target_menu = "main"
                  call.active_pnr = None
             else:
-                 call.active_pnr = pnr_key # SAVE TO DB MODEL
+                 call.active_pnr = pnr_key 
                  target_menu = "manage_booking_options"
 
-            pass_name = pnr_info.passenger_name if pnr_info.passenger_name else "N/A"
-            
-            # _go_to_menu helper now handles the db.commit()
-            response = _go_to_menu(db, call, target_menu, response["message"])
-            
-            # We must override the prompt if we are going to the options menu
+            # Use helper to set menu
+            _go_to_menu(call, target_menu, response["message"])
+            response["current_menu"] = target_menu
+
             if target_menu == "manage_booking_options":
-                response["prompt"] = f"PNR {pnr_info.pnr_display} for {pass_name} found. Say 'Cancel Flight'. Or, Press 2 to Cancel. Press star to go back."
+                pass_name = pnr_info.passenger_name if pnr_info.passenger_name else "N/A"
+                response["prompt"] = f"PNR {pnr_display} for {pass_name} found. Say 'Cancel Flight'. Or, Press 2 to Cancel. Press star to go back."
+            else:
+                 response["prompt"] = MENU_STRUCTURE[target_menu]["prompt"]
 
         else:
-            response = _handle_invalid_input(db, call, f"Sorry, PNR {pnr_key} was not found. Please try again.")
+            response = _handle_invalid_input(f"Sorry, PNR {pnr_key} was not found. Please try again.")
 
     elif action == "lookup_pnr_checkin":
         pnr_key = call.input_buffer
@@ -858,84 +911,105 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
         pnr_info = _find_pnr_info(pnr_key) 
         
         if pnr_info:
+            pnr_display = pnr_info.pnr_display
             if pnr_info.status == "Cancelled":
-                 response["message"] = f"Cannot check in for cancelled PNR {pnr_info.pnr_display}. Returning to main menu."
-                 response = _go_to_menu(db, call, "main", response["message"]) # Go to main
+                 response["message"] = f"Cannot check in for cancelled PNR {pnr_display}. Returning to main menu."
+                 target_menu = "main"
+                 _go_to_menu(call, target_menu, response["message"])
+                 response["current_menu"] = target_menu
+                 response["prompt"] = MENU_STRUCTURE[target_menu]["prompt"]
             else:
                  pass_name = pnr_info.passenger_name if pnr_info.passenger_name else "N/A"
                  response["status"] = "call_ended"
-                 response["message"] = f"Check-in successful for PNR {pnr_info.pnr_display}, passenger {pass_name}. A link has been sent. This call will now end."
+                 response["message"] = f"Check-in successful for PNR {pnr_display}, passenger {pass_name}. A link has been sent. This call will now end."
                  response["call_action"] = "hangup"
-                 end_call_logic(db, call, f"Checked in PNR: {pnr_info.pnr_display}") 
+                 end_call_logic(db, call.call_id, f"Checked in PNR: {pnr_display}") 
         else:
-            response = _handle_invalid_input(db, call, f"Sorry, PNR {pnr_key} was not found. Please try again.")
+            response = _handle_invalid_input(f"Sorry, PNR {pnr_key} was not found. Please try again.")
 
     elif action == "lookup_pnr_boardingpass":
         pnr_key = call.input_buffer
         call.input_buffer = ""
         pnr_info = _find_pnr_info(pnr_key) 
+
         if pnr_info:
+             pnr_display = pnr_info.pnr_display
              if pnr_info.status == "Cancelled":
-                 response["message"] = f"Cannot get boarding pass for cancelled PNR {pnr_info.pnr_display}. Returning to main menu."
-                 response = _go_to_menu(db, call, "main", response["message"])
+                 response["message"] = f"Cannot get boarding pass for cancelled PNR {pnr_display}. Returning to main menu."
+                 target_menu = "main"
+                 _go_to_menu(call, target_menu, response["message"])
+                 response["current_menu"] = target_menu
+                 response["prompt"] = MENU_STRUCTURE[target_menu]["prompt"]
              else:
                  response["status"] = "call_ended"
-                 response["message"] = f"Your boarding pass for PNR {pnr_info.pnr_display} has been re-sent to your registered email. This call will now end."
+                 response["message"] = f"Your boarding pass for PNR {pnr_display} has been re-sent to your registered email. This call will now end."
                  response["call_action"] = "hangup"
-                 end_call_logic(db, call, f"Sent boarding pass for PNR: {pnr_info.pnr_display}") 
+                 end_call_logic(db, call.call_id, f"Sent boarding pass for PNR: {pnr_display}") 
         else:
-             response = _handle_invalid_input(db, call, f"Sorry, PNR {pnr_key} was not found. Please try again.")
+             response = _handle_invalid_input(f"Sorry, PNR {pnr_key} was not found. Please try again.")
 
     elif action == "cancel_flight":
-        pnr_to_cancel_key = call.active_pnr # Get from DB
+        pnr_to_cancel_key = call.active_pnr # <--- Read from DB object
+        
         if pnr_to_cancel_key:
             booking_to_cancel = _find_pnr_info(pnr_to_cancel_key) 
+            
             if booking_to_cancel:
                 pnr_display = booking_to_cancel.pnr_display
+
                 if booking_to_cancel.status == "Cancelled":
                     response["message"] = f"Your flight for PNR {pnr_display} is already cancelled. This call will now end."
                 else:
+                    # 1. UPDATE THE BOOKING STATUS
                     booking_to_cancel.status = "Cancelled"
+                    
+                    # 2. <--- NEW: INCREMENT SEAT COUNT
                     flight_num = booking_to_cancel.flight
                     all_bookings_for_flight = db.query(Booking).filter(Booking.flight == flight_num).all()
+                    
                     if all_bookings_for_flight:
                         current_seats = all_bookings_for_flight[0].seats_available
                         new_seat_count = current_seats + 1
                         for b in all_bookings_for_flight:
                             b.seats_available = new_seat_count
                         print(f"      *** SEATS UPDATED for {flight_num}: {current_seats} -> {new_seat_count} ***")
-                    
+
+                    # 3. COMMIT (SAVE) ALL CHANGES
+                    # db.commit() # <--- This will be handled at the end
                     print(f"      *** PNR {pnr_display} ({pnr_to_cancel_key}) STATUS UPDATED TO CANCELLED IN DB ***")
                     response["message"] = f"Your flight for PNR {pnr_display} has been successfully cancelled. A confirmation email has been sent. This call will now end."
                 
                 response["status"] = "call_ended"
                 response["call_action"] = "hangup"
-                end_call_logic(db, call, f"Cancelled PNR: {pnr_display}") 
+                end_call_logic(db, call.call_id, f"Cancelled PNR: {pnr_display}") 
+            
             else:
+                 response = _handle_invalid_input("An error occurred finding your PNR. Returning to main menu.", "main")
                  call.active_pnr = None
-                 response = _handle_invalid_input(db, call, "An error occurred finding your PNR. Returning to main menu.", "main")
         else:
-             response = _handle_invalid_input(db, call, "An error occurred (no PNR active). Returning to main menu.", "main")
+             response = _handle_invalid_input("An error occurred (no PNR active). Returning to main menu.", "main")
 
     elif action == "lookup_ff_number":
         ff_number = call.input_buffer
         call.input_buffer = ""
         ff_info = _find_ff_info(ff_number) 
+
         if ff_info:
-            call.active_ff_number = ff_number # SAVE TO DB
-            response = _go_to_menu(db, call, "frequent_flyer_pin", f"Account {ff_number} found for {ff_info.name}.")
+            call.active_ff_number = ff_number
+            response = _go_to_menu(call, "frequent_flyer_pin", f"Account {ff_number} found for {ff_info.name}.")
         else:
-             response = _handle_invalid_input(db, call, f"Sorry, Flying Returns number {ff_number} was not found. Please try again.")
+             response = _handle_invalid_input(f"Sorry, Flying Returns number {ff_number} was not found. Please try again.")
 
     elif action == "verify_ff_pin":
         pin_entered = call.input_buffer
         call.input_buffer = ""
-        active_ff = call.active_ff_number # Get from DB
+        active_ff = call.active_ff_number
         ff_info = _find_ff_info(active_ff) 
+
         if ff_info and ff_info.pin == pin_entered: 
-            response = _go_to_menu(db, call, "frequent_flyer_options", "PIN verified.")
+            response = _go_to_menu(call, "frequent_flyer_options", "PIN verified.")
         else:
-            response = _handle_invalid_input(db, call, f"Sorry, that PIN is incorrect. Please try again.")
+            response = _handle_invalid_input(f"Sorry, that PIN is incorrect. Please try again.")
 
     elif action == "check_ff_points":
         active_ff = call.active_ff_number
@@ -945,15 +1019,16 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
              response["status"] = "call_ended"
              response["message"] = f"Your Flying Returns balance for account {active_ff} is {points:,} points. This call will now end."
              response["call_action"] = "hangup"
-             end_call_logic(db, call, f"Checked points for FF: {active_ff}") 
+             end_call_logic(db, call.call_id, f"Checked points for FF: {active_ff}") 
         else:
+            response = _handle_invalid_input("An error occurred finding your account details. Returning to main menu.", "main")
             call.active_ff_number = None
-            response = _handle_invalid_input(db, call, "An error occurred finding your account details. Returning to main menu.", "main")
 
     elif action == "lookup_pnr_refundstatus":
         pnr_key = call.input_buffer
         call.input_buffer = ""
         pnr_info = _find_pnr_info(pnr_key) 
+
         if pnr_info:
             pnr_display = pnr_info.pnr_display
             refund_msg = ""
@@ -961,55 +1036,60 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
                  refund_msg = f"Your refund request for cancelled PNR {pnr_display} is currently in process. It should reflect in your account within 5-7 business days."
             else:
                  refund_msg = f"There is no active refund request found for PNR {pnr_display} as the booking is currently {pnr_info.status}."
+
             response["status"] = "call_ended"
             response["message"] = refund_msg + " This call will now end."
             response["call_action"] = "hangup"
-            end_call_logic(db, call, f"Checked refund status for PNR: {pnr_display}") 
+            end_call_logic(db, call.call_id, f"Checked refund status for PNR: {pnr_display}") 
         else:
-             response = _handle_invalid_input(db, call, f"Sorry, PNR {pnr_key} was not found. Please try again.")
+             response = _handle_invalid_input(f"Sorry, PNR {pnr_key} was not found. Please try again.")
 
     elif action == "lookup_pnr_receipt":
         pnr_key = call.input_buffer
         call.input_buffer = ""
         pnr_info = _find_pnr_info(pnr_key) 
+
         if pnr_info:
             pnr_display = pnr_info.pnr_display
             response["status"] = "call_ended"
             response["message"] = f"A copy of the receipt for PNR {pnr_display} has been sent to your registered email address. This call will now end."
             response["call_action"] = "hangup"
-            end_call_logic(db, call, f"Sent receipt for PNR: {pnr_display}") 
+            end_call_logic(db, call.call_id, f"Sent receipt for PNR: {pnr_display}") 
         else:
-             response = _handle_invalid_input(db, call, f"Sorry, PNR {pnr_key} was not found. Please try again.")
+             response = _handle_invalid_input(f"Sorry, PNR {pnr_key} was not found. Please try again.")
 
     elif action == "lookup_flight_for_booking":
         flight_input = call.input_buffer
+        
         if flight_input.isdigit():
             flight_input = "AI" + flight_input
+        
         flight_info = _find_flight_info(flight_input.upper())
         call.input_buffer = ""
+        
         if flight_info:
             if flight_info.seats_available > 0:
-                call.booking_flight = flight_info.flight # SAVE TO DB
-                response = _go_to_menu(db, call, "booking_ask_name", f"Flight {flight_info.flight} found. {flight_info.seats_available} seats available.")
+                call.booking_flight = flight_info.flight # Store "AI101"
+                response = _go_to_menu(call, "booking_ask_name", f"Flight {flight_info.flight} found. {flight_info.seats_available} seats available.")
             else:
-                response = _handle_invalid_input(db, call, f"Sorry, flight {flight_info.flight} is full. Please try another flight.", "booking_ask_flight")
+                response = _handle_invalid_input(f"Sorry, flight {flight_info.flight} is full. Please try another flight.", "booking_ask_flight")
         else:
-            response = _handle_invalid_input(db, call, f"Sorry, flight {flight_input.upper()} was not found. Please try again.", "booking_ask_flight")
+            response = _handle_invalid_input(f"Sorry, flight {flight_input.upper()} was not found. Please try again.", "booking_ask_flight")
             
     elif action == "set_age_and_ask_gender":
         try:
             age = int(call.input_buffer)
             if 0 < age < 120:
-                call.booking_age = age # SAVE TO DB
+                call.booking_age = age
                 call.input_buffer = ""
-                response = _go_to_menu(db, call, "booking_ask_gender", f"Passenger age set as {age}.")
+                response = _go_to_menu(call, "booking_ask_gender", f"Passenger age set as {age}.")
             else:
-                response = _handle_invalid_input(db, call, "Invalid age. Please enter an age between 1 and 120.", "booking_ask_age")
+                response = _handle_invalid_input("Invalid age. Please enter an age between 1 and 120.", "booking_ask_age")
         except ValueError:
-            response = _handle_invalid_input(db, call, "Invalid age entered. Please try again.", "booking_ask_age")
+            response = _handle_invalid_input("Invalid age entered. Please try again.", "booking_ask_age")
 
     elif action == "set_gender_and_confirm":
-        call.booking_gender = option["gender"] # SAVE TO DB
+        call.booking_gender = option["gender"]
         
         name = call.booking_name
         age = call.booking_age
@@ -1018,15 +1098,13 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
         
         dynamic_prompt = (
             f"You are about to book one seat on flight {flight} for {name}, age {age}, gender {gender}. "
-            "Press 1 to confirm and book. Press star to cancel and return to the main menu."
+            "Press 1 to confirm and book. Press star to cancel and return to the main menu." # <-- CHANGED
         )
         
-        # We must manually update state before returning
         call.current_menu = "booking_confirm_details"
-        call.menu_path = (call.menu_path or []) + ["booking_confirm_details"]
+        call.menu_path.append("booking_confirm_details")
         response["current_menu"] = "booking_confirm_details"
         response["prompt"] = dynamic_prompt
-        # db.commit() will be called at the end
 
     elif action == "confirm_booking":
         flight_num = call.booking_flight
@@ -1035,34 +1113,43 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
         gender = call.booking_gender
         
         if not all([flight_num, name, age, gender]):
-             response = _handle_invalid_input(db, call, "A booking error occurred. Incomplete details. Returning to main menu.", "main")
-             return response # Return early
+             response = _handle_invalid_input("A booking error occurred. Incomplete details. Returning to main menu.", "main")
+             db.commit() # <--- Commit changes from _handle_invalid_input
+             return response
         
         all_bookings_for_flight = db.query(Booking).filter(Booking.flight == flight_num).all()
         
         if not all_bookings_for_flight:
-            response = _handle_invalid_input(db, call, f"Error: Flight {flight_num} not found. Returning to main menu.", "main")
-            return response # Return early
+            response = _handle_invalid_input(f"Error: Flight {flight_num} not found. Returning to main menu.", "main")
+            db.commit() # <--- Commit changes from _handle_invalid_input
+            return response
             
         current_seats = all_bookings_for_flight[0].seats_available
         if current_seats <= 0:
-            response = _handle_invalid_input(db, call, f"Sorry, flight {flight_num} has just sold out. Returning to main menu.", "main")
-            return response # Return early
+            response = _handle_invalid_input(f"Sorry, flight {flight_num} has just sold out. Returning to main menu.", "main")
+            db.commit() # <--- Commit changes from _handle_invalid_input
+            return response
         
         new_seat_count = current_seats - 1
         flight_template = all_bookings_for_flight[0]
         
         new_pnr_key = str(random.randint(100000, 999999))
-        while _find_pnr_info(new_pnr_key):
+        while _find_pnr_info(new_pnr_key): # Ensure PNR is unique
             new_pnr_key = str(random.randint(100000, 999999))
         
         new_pnr_display = flight_template.flight[:2] + new_pnr_key[2:]
 
         new_booking = Booking(
-            pnr_key=new_pnr_key, pnr_display=new_pnr_display, flight=flight_num,
-            status="Confirmed", route=flight_template.route, time=flight_template.time,
-            seats_available=new_seat_count, passenger_name=name,
-            passenger_age=age, passenger_gender=gender
+            pnr_key=new_pnr_key,
+            pnr_display=new_pnr_display,
+            flight=flight_num,
+            status="Confirmed",
+            route=flight_template.route,
+            time=flight_template.time,
+            seats_available=new_seat_count,
+            passenger_name=name,
+            passenger_age=age,
+            passenger_gender=gender
         )
         
         for b in all_bookings_for_flight:
@@ -1076,41 +1163,29 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
         response["status"] = "call_ended"
         response["message"] = f"Booking confirmed. Your new PNR is {new_pnr_display}. This call will now end."
         response["call_action"] = "hangup"
-        end_call_logic(db, call, f"Booked PNR: {new_pnr_display}")
+        end_call_logic(db, call.call_id, f"Booked PNR: {new_pnr_display}")
 
 
-    # --- Final Commit ---
-    # If the action was not an ending action, we must commit the changes to the DB.
     if response.get("status") != "transferring" and response.get("status") != "call_ended":
-        try:
-            db.commit()
-            print(f"✅ ACTION: {action} - {message} (State saved to DB)")
-        except Exception as e:
-            db.rollback()
-            print(f"🚨 CRITICAL: Failed to commit DB state for action {action}. Error: {e}")
-            # We must end the call if we can't save state
-            response = {"status": "error", "message": "A database error occurred. Ending call."}
-            end_call_logic(db, call, "Database commit error")
+        print(f"✅ ACTION: {action} - {message}")
+        db.commit() # <--- THIS IS THE FINAL SAVE for all state changes
+    
+    # end_call_logic handles its own commit, so we don't commit again
+    elif response.get("status") == "transferring" or response.get("status") == "call_ended":
+        pass 
 
     return response
 
 
-# --- REFACTORED: end_call (user hangup) ---
+# ==================== end_call ====================
 @app.post("/ivr/end")
 def end_call(request: CallEndRequest, db: Session = Depends(get_db)): 
     """End call (user hung up)"""
     call_id = request.call_id
-    try:
-        # Get the call from the DB
-        call = db.query(CallHistory).filter(CallHistory.call_id == call_id).first()
-        if call and not call.end_time:
-            # Mark it as ended
-            end_call_logic(db, call, "Call ended by user.")
-            return {"status": "call_ended", "call_id": call_id}
-        elif call:
-            return {"status": "error", "message": "Call already ended"}
-        else:
-            return {"status": "error", "message": "Call not found"}
-    except Exception as e:
-        print(f"🚨 CRITICAL: Error in /ivr/end: {e}")
-        return {"status": "error", "message": "Server error during hangup"}
+    if call_id:
+        end_call_logic(db, call_id, "Call ended by user.")
+        return {"status": "call_ended", "call_id": call_id}
+        
+    return {"status": "error", "message": "Call not found"}
+
+ippo itha copy paste pannitu try pandra
