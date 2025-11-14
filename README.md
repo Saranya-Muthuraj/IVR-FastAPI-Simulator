@@ -37,8 +37,8 @@ It demonstrates **end-to-end integration** between speech, API processing, and d
 ✅ Fully functional Text-to-Speech (TTS) and Speech-to-Text (STT) via browser APIs  
 ✅ SQLite (local) and PostgreSQL (production) compatible  
 ✅ Deployed and accessible via Render.com  
-✅ Includes a full unit test suite using `pytest`.
-✅Features a detailed `DEFECT_TRACKER.md` for project transparency.
+✅ Includes a full unit test suite using `pytest`     
+✅Features a detailed `DEFECT_TRACKER.md` for project transparency
 
 ---
 
