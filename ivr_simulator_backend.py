@@ -1188,4 +1188,3 @@ def end_call(request: CallEndRequest, db: Session = Depends(get_db)):
         
     return {"status": "error", "message": "Call not found"}
 
-ippo itha copy paste pannitu try pandra
