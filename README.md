@@ -24,6 +24,8 @@ It demonstrates **end-to-end integration** between speech, API processing, and d
 | `database.py` | SQLAlchemy models, database setup, and session dependency |
 | `ivr_simulator.html` | Frontend simulator with keypad, microphone, and live call interface |
 | `requirements.txt` | Python dependencies for backend deployment |
+| `test_ivr_simulator.py` | **(NEW)** Unit tests for all API endpoints using `pytest`. |
+| `DEFECT_TRACKER.md` | **(NEW)** A complete log of all 50 bugs found and fixed during development. |
 
 ---
 
@@ -35,6 +37,8 @@ It demonstrates **end-to-end integration** between speech, API processing, and d
 ✅ Fully functional Text-to-Speech (TTS) and Speech-to-Text (STT) via browser APIs  
 ✅ SQLite (local) and PostgreSQL (production) compatible  
 ✅ Deployed and accessible via Render.com  
+✅ Includes a full unit test suite using `pytest`.
+✅Features a detailed `DEFECT_TRACKER.md` for project transparency.
 
 ---
 
@@ -67,6 +71,7 @@ source .venv/bin/activate     # macOS/Linux
 # 2. Install dependencies
 pip install -r requirements.txt
 ```
+---
 
 ## 🗃️ Database & Data Seeding
 
@@ -108,6 +113,27 @@ By default, it uses: `sqlite:///./ivr.db`.
 3.Press the green button to start a simulated call 🎧
 
 ---
+
+🧪 Testing
+
+This project includes a complete unit test suite to ensure the backend logic and database state management work correctly.
+
+1. **Install Testing Dependencies**: (These are included in `requirements.txt`)
+
+```Bash
+
+pip install pytest httpx
+```
+2. **Run Tests**: From your terminal, simply run `pytest`:
+
+```Bash
+
+pytest
+```
+The tests run against a separate, in-memory SQLite database (`sqlite:///:memory:`) and will not affect your local `ivr.db` file.
+
+---
+
 ## 🧭 API Endpoints Overview
 
 | Method | Endpoint             | Description                         |
@@ -124,7 +150,7 @@ By default, it uses: `sqlite:///./ivr.db`.
 
 A modern, smartphone-style simulator featuring:
 
-- DTMF keypad with **0–9**, `*`, and `#`
+- DTMF keypad with `0–9`, `*`, and `#`
 - **Start** (green), **Speak** (blue), and **Hangup** (red) buttons
 - IVR conversation bubbles with realistic **speech synthesis (TTS)**
 - Integrated **browser microphone** support for speech commands
