@@ -1,6 +1,7 @@
 # ivr_simulator_backend.py
-# FINAL VERSION (v24): Database-Backed State (Multi-Worker Fix)
+# FINAL VERSION (v4.1): Lifespan Fix (Replaces on_startup)
 
+import os
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -11,9 +12,13 @@ import re
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from contextlib import contextmanager, asynccontextmanager # <--- IMPORT THIS
+
+# Import our new database models and session helper
 from database import get_db, Booking, FrequentFlyer, CallHistory, SessionLocal, engine, Base
 
-# --- DATABASE MOCK DATA (for setup) ---
+
+# --- DATABASE MOCK DATA (Unchanged) ---
 MOCK_PNR_DB = {
     "241234": {"pnr_display": "AI1234", "flight": "AI101", "status": "Confirmed", "route": "Mumbai to Delhi", "time": "Today 6:00 PM", "seats_available": 30, "passenger_name": "R. Kumar", "passenger_age": 45, "passenger_gender": "Male"},
     "855678": {"pnr_display": "UK5678", "flight": "UK822", "status": "Delayed", "route": "Chennai to Bangalore", "time": "Today 4:30 PM (New 5:15 PM)", "seats_available": 5, "passenger_name": "S. Priya", "passenger_age": 28, "passenger_gender": "Female"},
@@ -28,18 +33,18 @@ MOCK_FF_DB = {
     "987654321": {"pin": "1995", "points": 55000, "name": "Kumar"},
     "555666777": {"pin": "0000", "points": 800, "name": "Priya"}
 }
+# --- END MOCK DATA ---
 
-# --- DATABASE SETUP (Called on startup) ---
+
+# --- DATABASE SETUP (Unchanged) ---
 def setup_database():
-    # Create all tables
     Base.metadata.create_all(bind=engine)
-    
     db = SessionLocal()
     try:
         if db.query(Booking).count() == 0:
             print("Populating Bookings (PNR) table...")
             for key, data in MOCK_PNR_DB.items():
-                db_booking = Booking(pnr_key=key, **data) 
+                db_booking = Booking(pnr_key=key, **data)
                 db.add(db_booking)
             db.commit()
             print("Bookings populated.")
@@ -57,19 +62,47 @@ def setup_database():
             print("FrequentFlyer table already has data.")
             
     except Exception as e:
-        print(f"An error occurred during setup: {e}")
+        print(f"An error occurred: {e}")
         db.rollback()
     finally:
         db.close()
 
-# --- FASTAPI APP ---
-app = FastAPI(title="IVR Simulator Backend", version="3.5.0 (DB State Fix)")
+# ==========================================================
+# ##### !!!!! THIS IS THE LIFESPAN FIX !!!!! #####
+# ==========================================================
 
-@app.on_event("startup")
-def on_startup():
-    print("--- Server starting up ---")
-    setup_database()
-    print("--- Startup complete. Server is ready. ---")
+# 1. Define the lifespan function
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # This is the code that runs ON STARTUP
+    if os.environ.get("TESTING") != "true":
+        print("--- Server starting up (Production Mode) ---")
+        setup_database() # <--- Your database setup function
+        print("--- Startup complete. Server is ready. ---")
+    else:
+        print("--- Server starting up (Testing Mode): Skipping setup_database(). ---")
+    
+    # ---
+    yield # <--- The app runs here
+    # ---
+    
+    # Code below yield runs ON SHUTDOWN (if needed)
+    print("--- Server shutting down. ---")
+
+
+# 2. Pass the lifespan function to the FastAPI app
+app = FastAPI(
+    title="IVR Simulator Backend", 
+    version="4.1.0 (Lifespan Fix)", 
+    lifespan=lifespan # <--- HERE
+)
+
+# 3. The old @app.on_event("startup") function is now DELETED.
+
+# ==========================================================
+# ##### !!!!! END OF LIFESPAN FIX !!!!! #####
+# ==========================================================
+
 
 # Enable CORS
 app.add_middleware(
@@ -80,7 +113,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- DATA MODELS (Unchanged) ---
+# ==================== DATA MODELS (Unchanged) ====================
 class CallStart(BaseModel):
     caller_number: str
     call_id: Optional[str] = None
@@ -88,20 +121,17 @@ class CallStart(BaseModel):
 class DTMFInput(BaseModel):
     call_id: str
     digit: str
-    current_menu: str # Note: We now ignore this and use the DB state
+    current_menu: str
 
 class VoiceInput(BaseModel):
     call_id: str
     text: str
-    current_menu: str # Note: We now ignore this and use the DB state
+    current_menu: str
 
 class CallEndRequest(BaseModel):
     call_id: str
 
-# --- DELETED `active_calls = {}` ---
-# State is now in the DB.
-
-# --- MENU_STRUCTURE (Unchanged) ---
+# ==================== MENU_STRUCTURE (Unchanged) ====================
 MENU_STRUCTURE = {
     "main": {
         "prompt": "Welcome to Air India. You can say your option. "
@@ -122,22 +152,20 @@ MENU_STRUCTURE = {
             "4": {"action": "goto_menu", "target": "check_in_options", "message": "You selected Check-in and Boarding Pass."},
             "5": {"action": "goto_menu", "target": "booking_ask_flight", "message": "You selected Book New Flight."},
             "6": {"action": "goto_menu", "target": "frequent_flyer_number", "message": "You selected Frequent Flyer Program."},
-            "7.": {"action": "goto_menu", "target": "special_assistance", "message": "You selected Special Assistance."},
+            "7": {"action": "goto_menu", "target": "special_assistance", "message": "You selected Special Assistance."},
             "8": {"action": "goto_menu", "target": "refunds", "message": "You selected Refunds and Receipts."},
             "9": {"action": "goto_menu", "target": "other_inquiries", "message": "You selected Other Inquiries."},
             "0": {"action": "transfer_agent", "message": "You will be directing to our airline agent please wait"}
         }
     },
-    # ... (All other menus are unchanged) ...
-    # (Copying just one for brevity)
-    "flight_status_pnr": {
+    "flight_status_pnr": { 
         "prompt": "Please say your 6-digit PNR number, or enter it on the keypad followed by hash. Press star to go back.",
         "options": {
             "#": {"action": "lookup_pnr_status", "message": "Looking up your PNR..."},
             "*": {"action": "goto_menu", "target": "main", "message": "Going back to main menu."}
         }
     },
-    "manage_booking_pnr": { 
+    "manage_booking_pnr": {
        "prompt": "To manage your booking, please say your 6-digit PNR number, or enter it on the keypad followed by hash. Press star to go back.",
         "options": {
             "#": {"action": "lookup_pnr_manage", "message": "Finding your booking..."},
@@ -280,44 +308,46 @@ MENU_STRUCTURE = {
     }
 }
 
+# ==================== HELPER FUNCTIONS (DATABASE) (Unchanged) ====================
 
-# ==================== HELPER FUNCTIONS (REFACTORED) ====================
-
-# --- NEW: Get call from DB ---
-def get_call_from_db(call_id: str, db: Session):
-    """Fetches the call state from the CallHistory table."""
+def get_active_call(call_id: str, db: Session):
     call = db.query(CallHistory).filter(CallHistory.call_id == call_id).first()
+    
     if not call:
-        print(f"🚨 CRITICAL: Call ID {call_id} not found in database.")
-        raise HTTPException(status_code=404, detail="Call not found")
+        print(f"Error: Call {call_id} not in DB.")
+        raise HTTPException(status_code=404, detail="Call not found in database")
+    
     if call.end_time:
-        print(f"🚨 WARNING: Call ID {call_id} has already ended.")
-        raise HTTPException(status_code=410, detail="Call has already ended")
+        print(f"Error: Call {call_id} has already ended.")
+        raise HTTPException(status_code=400, detail="Call has already ended")
+        
     return call
 
-# --- REFACTORED: end_call_logic ---
-def end_call_logic(db: Session, call: CallHistory, status_msg=""):
-    """Updates the CallHistory row to mark the call as ended."""
-    try:
-        call.end_time = datetime.now()
-        if status_msg:
-            # Note: `inputs` is expected to be a list.
-            call.inputs = (call.inputs or []) + [status_msg]
-        
-        db.commit()
-        print(f"✅ Call {call.call_id} saved to history DB.")
-    except Exception as e:
-        print(f"🚨 CRITICAL: Failed to commit end_call_logic for call {call.call_id}. Error: {e}")
-        db.rollback()
-
-# --- REFACTORED: _go_to_menu ---
-def _go_to_menu(db: Session, call: CallHistory, target_menu: str, message: Optional[str] = None):
-    """Helper to transition the call state to a new menu and save to DB."""
-    call.current_menu = target_menu
-    call.menu_path = (call.menu_path or []) + [target_menu]
+def end_call_logic(db: Session, call_id_to_end, status_msg=""):
+    call_to_end = db.query(CallHistory).filter(CallHistory.call_id == call_id_to_end).first()
     
-    # Save changes to the database
-    db.commit() 
+    if call_to_end and not call_to_end.end_time: 
+        call_to_end.end_time = datetime.now()
+        
+        if status_msg:
+            new_inputs = list(call_to_end.inputs)
+            new_inputs.append(status_msg)
+            call_to_end.inputs = new_inputs
+            
+        db.commit() 
+        print(f"✅ Call {call_id_to_end} marked as ended in DB.")
+    elif not call_to_end:
+        print(f"Error: Tried to end call {call_id_to_end} but it was not in DB.")
+    else:
+        print(f"Info: Tried to end call {call_id_to_end} but it was already ended.")
+
+
+def _go_to_menu(call: CallHistory, target_menu: str, message: Optional[str] = None):
+    call.current_menu = target_menu
+    
+    new_path = list(call.menu_path)
+    new_path.append(target_menu)
+    call.menu_path = new_path
     
     response = {
         "status": "processed",
@@ -327,23 +357,20 @@ def _go_to_menu(db: Session, call: CallHistory, target_menu: str, message: Optio
     }
     return response
 
-# ==================== ENDPOINTS (REFACTORED) ====================
+# ==================== ENDPOINTS (Unchanged from v4) ====================
 
 @app.get("/")
 def root(db: Session = Depends(get_db)): 
-    """Health check"""
     try:
         booking_count = db.query(Booking).count()
         ff_count = db.query(FrequentFlyer).count()
-        # --- THIS IS THE FIX ---
-        # We now count rows where end_time is NOT NULL
-        history_count = db.query(CallHistory).filter(CallHistory.end_time != None).count()
-        live_call_count = db.query(CallHistory).filter(CallHistory.end_time == None).count()
+        history_count = db.query(CallHistory).count()
+        active_call_count = db.query(CallHistory).filter(CallHistory.end_time == None).count()
         
         return {
             "status": "IVR Simulator Running",
             "database_status": "Connected",
-            "live_active_calls_in_db": live_call_count,
+            "live_active_calls_in_db": active_call_count,
             "total_completed_calls_in_db": history_count,
             "total_bookings_in_db": booking_count,
             "total_ff_accounts_in_db": ff_count
@@ -353,31 +380,20 @@ def root(db: Session = Depends(get_db)):
         return {"status": "IVR Simulator Running", "database_status": "Error - Not Connected"}
 
 
-# --- REFACTORED: start_call ---
 @app.post("/ivr/start")
 def start_call(call_data: CallStart, db: Session = Depends(get_db)):
-    """Creates a new call and saves its initial state to the database."""
     call_id = f"CALL_{random.randint(100000, 999999)}"
 
-    # Create the new call entry in the database
     new_call = CallHistory(
         call_id=call_id,
         caller_number=call_data.caller_number,
-        start_time=datetime.now(),
-        current_menu="main",
-        menu_path=["main"],
-        inputs=[],
-        input_buffer="",
+        start_time=datetime.now()
     )
     
-    try:
-        db.add(new_call)
-        db.commit()
-        print(f"\n📞 NEW CALL: {call_id} from {call_data.caller_number}. Saved to DB.")
-    except Exception as e:
-        db.rollback()
-        print(f"🚨 CRITICAL: Failed to create new call in DB. Error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to initiate call state")
+    db.add(new_call)
+    db.commit()
+
+    print(f"\n📞 NEW CALL: {call_id} from {call_data.caller_number} (Saved to DB)")
 
     return {
         "call_id": call_id,
@@ -385,19 +401,16 @@ def start_call(call_data: CallStart, db: Session = Depends(get_db)):
         "prompt": MENU_STRUCTURE["main"]["prompt"]
     }
 
-# --- REFACTORED: handle_voice_input ---
 @app.post("/ivr/process_voice")
 async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_db)): 
     call_id = input_data.call_id
     text = input_data.text.lower()
     
-    # --- FETCH STATE FROM DB ---
-    call = get_call_from_db(call_id, db)
-    original_menu = call.current_menu # Use menu from DB
-    
+    call = get_active_call(call_id, db)
+    original_menu = call.current_menu
+
     print(f"\n🗣️ VOICE INPUT: Call {call_id}, Menu: {original_menu}, Text: {text}")
 
-    # --- NLU (Natural Language Understanding) Simulation (Unchanged) ---
     pnr_input_menus = ["flight_status_pnr", "manage_booking_pnr", "check_in_pnr_for_checkin", "check_in_pnr_for_boardingpass", "refunds_pnr_for_status", "refunds_pnr_for_receipt"]
     ff_number_menu = "frequent_flyer_number"
     ff_pin_menu = "frequent_flyer_pin"
@@ -407,79 +420,112 @@ async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_d
     booking_gender_menu = "booking_ask_gender"
     booking_confirm_menu = "booking_confirm_details"
 
-    FILLER_WORDS = ['my', 'is', 'uh', 'um', 'please', 'can', 'get', 'space', 'dot', 'dash', 'want', 'to', 'like']
+    FILLER_WORDS = [
+        'my', 'is', 'uh', 'um', 'please', 'can', 'get', 'space', 'dot', 'dash', 'want', 'to', 'like'
+    ]
 
     def map_spoken_pnr(spoken_text):
-        letter_map = {'a': '2', 'b': '2', 'c': '2', 'd': '3', 'e': '3', 'f': '3', 'g': '4', 'h': '4', 'i': '4', 'j': '5', 'k': '5', 'l': '5', 'm': '6', 'n': '6', 'o': '6', 'p': '7', 'q': '7', 'r': '7', 's': '7', 't': '8', 'u': '8', 'v': '8', 'w': '9', 'x': '9', 'y': '9', 'z': '9'}
-        num_word_map = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9", "zero": "0"}
+        letter_map = {
+            'a': '2', 'b': '2', 'c': '2', 'd': '3', 'e': '3', 'f': '3',
+            'g': '4', 'h': '4', 'i': '4', 'j': '5', 'k': '5', 'l': '5',
+            'm': '6', 'n': '6', 'o': '6', 'p': '7', 'q': '7', 'r': '7', 's': '7',
+            't': '8', 'u': '8', 'v': '8', 'w': '9', 'x': '9', 'y': '9', 'z': '9'
+        }
+        num_word_map = {
+            "one": "1", "two": "2", "three": "3", "four": "4", 
+            "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9", "zero": "0"
+        }
+
         for word in FILLER_WORDS + ['pnr', 'number']:
             spoken_text = spoken_text.replace(word, ' ')
+
         for word, digit in num_word_map.items():
             spoken_text = spoken_text.replace(word, digit)
+        
         cleaned_text = re.sub(r'[.\s,-]+', '', spoken_text)
+        
         chars = re.findall(r'([a-zA-Z0-9])', cleaned_text)
         alphanumeric_pnr = "".join(chars)
+        
         if len(alphanumeric_pnr) == 6:
             numeric_pnr = ""
             for char in alphanumeric_pnr:
-                if char.isalpha(): numeric_pnr += letter_map.get(char, '') 
-                elif char.isdigit(): numeric_pnr += char
+                if char.isalpha(): 
+                    numeric_pnr += letter_map.get(char, '') 
+                elif char.isdigit():
+                    numeric_pnr += char
+            
             if len(numeric_pnr) == 6:
-                print(f"       NLU: Converted spoken PNR '{alphanumeric_pnr}' to '{numeric_pnr}'")
+                print(f"      NLU: Converted spoken PNR '{alphanumeric_pnr}' to '{numeric_pnr}'")
                 return numeric_pnr
+        
         digit_match = re.search(r'(\d{6})', alphanumeric_pnr)
         if digit_match:
-             print(f"       NLU: Found numeric PNR: {digit_match.group(1)}")
+             print(f"      NLU: Found numeric PNR: {digit_match.group(1)}")
              return digit_match.group(1)
+             
         return None
 
     def map_spoken_flight_number(spoken_text):
-        num_word_map = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9", "zero": "0"}
+        num_word_map = {
+            "one": "1", "two": "2", "three": "3", "four": "4", 
+            "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9", "zero": "0"
+        }
+
         for word in FILLER_WORDS + ['flight', 'book', 'number']:
             spoken_text = spoken_text.replace(word, ' ')
+
         for word, digit in num_word_map.items():
             spoken_text = spoken_text.replace(word, digit)
+        
         cleaned_text = re.sub(r'[\s.-]+', '', spoken_text) 
+        
         flight_match = re.search(r'([a-zA-Z0-9]{2}\d{2,4})', cleaned_text, re.IGNORECASE)
         if flight_match:
             flight_num_str = flight_match.group(1).upper()
-            print(f"       NLU: Found flight code '{flight_num_str}'")
+            print(f"      NLU: Found flight code '{flight_num_str}'")
             return flight_num_str
+
         cleaned_digits = re.sub(r'[^0-9]+', '', cleaned_text)
         if cleaned_digits:
-            flight_num_str = "AI" + cleaned_digits
-            print(f"       NLU: Converted spoken digits to '{flight_num_str}'")
+            flight_num_str = "AI" + cleaned_digits # Assume AI prefix
+            print(f"      NLU: Converted spoken digits to '{flight_num_str}'")
             return flight_num_str
         return None
 
     def map_spoken_age(spoken_text):
         for word in FILLER_WORDS + ['age', 'years', 'old']:
             spoken_text = spoken_text.replace(word, ' ')
-        num_word_map = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9", "zero": "0", "ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14", "fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18", "nineteen": "19", "twenty": "20", "thirty": "30", "forty": "40", "fifty": "50", "sixty": "60", "seventy": "70", "eighty": "80", "ninety": "90"}
+
+        num_word_map = {
+            "one": "1", "two": "2", "three": "3", "four": "4", 
+            "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9", "zero": "0",
+            "ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14", "fifteen": "15",
+            "sixteen": "16", "seventeen": "17", "eighteen": "18", "nineteen": "19", "twenty": "20",
+            "thirty": "30", "forty": "40", "fifty": "50", "sixty": "60", "seventy": "70", "eighty": "80", "ninety": "90"
+        }
         for word, digit in num_word_map.items():
             spoken_text = spoken_text.replace(word, digit)
+
         age_match = re.search(r'(\d{1,3})', spoken_text)
         if age_match:
             age = int(age_match.group(1))
             if 0 < age < 120:
-                print(f"       NLU: Extracted age '{age}'")
+                print(f"      NLU: Extracted age '{age}'")
                 return age
         return None
-    # --- END NLU ---
 
-
-    # --- NLU PROCESSING (Refactored) ---
     if original_menu in pnr_input_menus:
         numeric_pnr = map_spoken_pnr(text) 
         if numeric_pnr:
-            call.input_buffer = numeric_pnr # SAVE TO DB MODEL
+            call.input_buffer = numeric_pnr
             dtmf_input = DTMFInput(call_id=call_id, digit="#", current_menu=original_menu)
             return await handle_dtmf(dtmf_input, db) 
 
     elif original_menu == booking_flight_menu:
         flight_num_str = map_spoken_flight_number(text)
         if flight_num_str:
-            call.input_buffer = flight_num_str # SAVE TO DB MODEL
+            call.input_buffer = flight_num_str
             dtmf_input = DTMFInput(call_id=call_id, digit="#", current_menu=original_menu)
             return await handle_dtmf(dtmf_input, db)
 
@@ -487,24 +533,31 @@ async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_d
         cleaned_name = text
         for word in FILLER_WORDS + ['name']:
              cleaned_name = cleaned_name.replace(word, ' ')
+        
         name = cleaned_name.strip().title()
+        
         if name:
-            call.booking_name = name # SAVE TO DB MODEL
-            # We pass `db` to the helper
-            return _go_to_menu(db, call, "booking_ask_age", f"Passenger name set as {name}.") 
+            call.booking_name = name
+            response = _go_to_menu(call, "booking_ask_age", f"Passenger name set as {name}.")
+            db.commit() # <--- SAVE CHANGES
+            return response
         
     elif original_menu == booking_age_menu:
         age = map_spoken_age(text)
         if age:
-            call.input_buffer = str(age) # SAVE TO DB MODEL
+            call.input_buffer = str(age)
             dtmf_input = DTMFInput(call_id=call_id, digit="#", current_menu=original_menu)
             return await handle_dtmf(dtmf_input, db)
 
     elif original_menu == booking_gender_menu:
         digit = None
-        if "male" in text: digit = "1"
-        elif "female" in text: digit = "2"
-        elif "other" in text: digit = "3"
+        if "male" in text:
+            digit = "1"
+        elif "female" in text:
+            digit = "2"
+        elif "other" in text:
+            digit = "3"
+        
         if digit:
             dtmf_input = DTMFInput(call_id=call_id, digit=digit, current_menu=original_menu)
             return await handle_dtmf(dtmf_input, db)
@@ -514,10 +567,12 @@ async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_d
         for word in FILLER_WORDS + ['number']:
              cleaned_text = cleaned_text.replace(word, ' ')
         cleaned_text = re.sub(r'[^0-9]+', '', cleaned_text)
+        
         data_match = re.search(r'(\d{9})', cleaned_text)
         if data_match:
             data = data_match.group(1)
-            call.input_buffer = data # SAVE TO DB MODEL
+            print(f"      NLU: Extracted FF Number: {data}")
+            call.input_buffer = data
             dtmf_input = DTMFInput(call_id=call_id, digit="#", current_menu=original_menu)
             return await handle_dtmf(dtmf_input, db) 
 
@@ -525,20 +580,25 @@ async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_d
         cleaned_text = text
         for word in FILLER_WORDS + ['pin']:
              cleaned_text = cleaned_text.replace(word, ' ')
+        
         spoken_digits = cleaned_text.split()
         pin_digits = ""
         num_map = {"zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9"}
         for word in spoken_digits:
-            if word.isdigit(): pin_digits += word
-            elif word in num_map: pin_digits += num_map[word]
+            if word.isdigit():
+                pin_digits += word
+            elif word in num_map:
+                pin_digits += num_map[word]
+
         data_match = re.search(r'(\d{4})', pin_digits)
         if data_match:
             data = data_match.group(1)
-            call.input_buffer = data # SAVE TO DB MODEL
+            print(f"      NLU: Extracted PIN: {data}")
+            call.input_buffer = data
             dtmf_input = DTMFInput(call_id=call_id, digit="#", current_menu=original_menu)
             return await handle_dtmf(dtmf_input, db) 
 
-    # --- Voice to DTMF mapping (Refactored) ---
+    # --- (Voice to DTMF mapping logic) ---
     digit_to_press = None
     menu_to_use = original_menu
     if "agent" in text or "speak" in text:
@@ -546,16 +606,15 @@ async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_d
         menu_to_use = "main"
     elif "main menu" in text:
         if original_menu != "main":
-            digit_to_press = "*"
+            digit_to_press = "*" 
             menu_to_use = original_menu
     elif "back" in text:
        if original_menu in [ff_pin_menu, "booking_confirm_details", "booking_ask_name", "booking_ask_age", "booking_ask_gender"]:
-            digit_to_press = "*"
+            digit_to_press = "*" 
             menu_to_use = original_menu
        elif original_menu != "main":
-            digit_to_press = "*"
+            digit_to_press = "*" 
             menu_to_use = original_menu
-            
     if digit_to_press is None:
         if original_menu == "main":
             if "status" in text: digit_to_press = "1"
@@ -572,7 +631,6 @@ async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_d
             elif "cancel" in text: digit_to_press = "2"
         elif original_menu == booking_confirm_menu:
             if "confirm" in text or "yes" in text: digit_to_press = "1"
-        # ... (other voice-to-dtmf mappings are unchanged) ...
         elif original_menu == "baggage":
             if "lost" in text: digit_to_press = "1"
             elif "allowance" in text: digit_to_press = "2"
@@ -593,20 +651,20 @@ async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_d
             elif "group" in text: digit_to_press = "2"
 
     if digit_to_press:
-        print(f"       NLU: Mapped text '{text}' to DTMF digit: {digit_to_press} (using menu: {menu_to_use})")
-        dtmf_input = DTMFInput(call_id=call_id, digit=digit_to_press, current_menu=menu_to_use)
+        print(f"      NLU: Mapped text '{text}' to DTMF digit: {digit_to_press} (using menu: {menu_to_use})")
+        dtmf_input = DTMFInput(
+            call_id=call_id,
+            digit=digit_to_press,
+            current_menu=menu_to_use
+        )
         return await handle_dtmf(dtmf_input, db) 
 
-    # --- NLU Fail logic (Unchanged) ---
-    print("       NLU: No intent or digit matched.")
+    # --- (NLU Fail logic) ---
+    print("      NLU: No intent or digit matched.")
     prompt_msg = "I'm sorry, I didn't understand that. Please try again."
-    # ... (other prompt messages are unchanged) ...
     if original_menu in pnr_input_menus:
         prompt_msg = "Sorry, I didn't catch that PNR. Please clearly say your 6-digit PNR."
-    # ...
-    
-    # We must commit any DB changes even if NLU failed (e.g., call.inputs)
-    db.commit() 
+    # ... (other custom fail messages) ...
 
     return {
         "status": "invalid",
@@ -620,7 +678,7 @@ async def handle_voice_input(input_data: VoiceInput, db: Session = Depends(get_d
 async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)): 
     call_id = input_data.call_id
     digit = input_data.digit
-
+    
     # --- FETCH STATE FROM DB ---
     call = get_call_from_db(call_id, db)
     # We get the menu from the DB, not the user input, for security
@@ -630,7 +688,6 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
 
     menu = MENU_STRUCTURE.get(menu_name_from_db)
     if not menu:
-        # This should not happen if DB state is valid
         return {"error": "Invalid menu state"}
 
     # --- Input buffer logic (Refactored) ---
@@ -669,8 +726,8 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
 
 
     if digit not in menu["options"]:
-        db.commit() # Save any state changes before returning
-        return { "status": "invalid", "prompt": "Invalid option. Please try again.", "current_menu": menu_name_from_db, "valid_options": list(menu["options"].keys()) }
+         db.commit() # Save any state changes before returning
+         return { "status": "invalid", "prompt": "Invalid option. Please try again.", "current_menu": menu_name_from_db, "valid_options": list(menu["options"].keys()) }
 
     # Save the input
     call.inputs = (call.inputs or []) + [digit]
@@ -805,16 +862,14 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
                  response["message"] = f"Cannot check in for cancelled PNR {pnr_info.pnr_display}. Returning to main menu."
                  response = _go_to_menu(db, call, "main", response["message"]) # Go to main
             else:
-                pass_name = pnr_info.passenger_name if pnr_info.passenger_name else "N/A"
-                response["status"] = "call_ended"
-                response["message"] = f"Check-in successful for PNR {pnr_info.pnr_display}, passenger {pass_name}. A link has been sent. This call will now end."
-                response["call_action"] = "hangup"
-                end_call_logic(db, call, f"Checked in PNR: {pnr_info.pnr_display}") 
+                 pass_name = pnr_info.passenger_name if pnr_info.passenger_name else "N/A"
+                 response["status"] = "call_ended"
+                 response["message"] = f"Check-in successful for PNR {pnr_info.pnr_display}, passenger {pass_name}. A link has been sent. This call will now end."
+                 response["call_action"] = "hangup"
+                 end_call_logic(db, call, f"Checked in PNR: {pnr_info.pnr_display}") 
         else:
             response = _handle_invalid_input(db, call, f"Sorry, PNR {pnr_key} was not found. Please try again.")
 
-    # ... (All other lookup actions are refactored similarly) ...
-    
     elif action == "lookup_pnr_boardingpass":
         pnr_key = call.input_buffer
         call.input_buffer = ""
@@ -848,10 +903,9 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
                         new_seat_count = current_seats + 1
                         for b in all_bookings_for_flight:
                             b.seats_available = new_seat_count
-                        print(f"       *** SEATS UPDATED for {flight_num}: {current_seats} -> {new_seat_count} ***")
+                        print(f"      *** SEATS UPDATED for {flight_num}: {current_seats} -> {new_seat_count} ***")
                     
-                    # db.commit() is handled by end_call_logic
-                    print(f"       *** PNR {pnr_display} ({pnr_to_cancel_key}) STATUS UPDATED TO CANCELLED IN DB ***")
+                    print(f"      *** PNR {pnr_display} ({pnr_to_cancel_key}) STATUS UPDATED TO CANCELLED IN DB ***")
                     response["message"] = f"Your flight for PNR {pnr_display} has been successfully cancelled. A confirmation email has been sent. This call will now end."
                 
                 response["status"] = "call_ended"
@@ -972,6 +1026,7 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
         call.menu_path = (call.menu_path or []) + ["booking_confirm_details"]
         response["current_menu"] = "booking_confirm_details"
         response["prompt"] = dynamic_prompt
+        # db.commit() will be called at the end
 
     elif action == "confirm_booking":
         flight_num = call.booking_flight
@@ -1014,10 +1069,9 @@ async def handle_dtmf(input_data: DTMFInput, db: Session = Depends(get_db)):
             b.seats_available = new_seat_count
             
         db.add(new_booking)
-        # db.commit() is handled by end_call_logic
         
-        print(f"       *** NEW BOOKING: {new_pnr_display} for {name} on {flight_num} ***")
-        print(f"       *** SEATS UPDATED for {flight_num}: {current_seats} -> {new_seat_count} ***")
+        print(f"      *** NEW BOOKING: {new_pnr_display} for {name} on {flight_num} ***")
+        print(f"      *** SEATS UPDATED for {flight_num}: {current_seats} -> {new_seat_count} ***")
 
         response["status"] = "call_ended"
         response["message"] = f"Booking confirmed. Your new PNR is {new_pnr_display}. This call will now end."
