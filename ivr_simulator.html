@@ -660,7 +660,7 @@
             } catch (error) {
                 console.error('Error handling DTMF:', error);
                 await speakText("A connection error occurred. Ending call.");
-                endCall(true);
+                endCall(false);
             }
         }
 
@@ -694,7 +694,7 @@
             } catch (error) {
                 console.error('Error handling voice input:', error);
                 await speakText("A connection error occurred. Ending call.");
-                endCall(true);
+                endCall(false);
             }
         }
 
@@ -909,3 +909,4 @@
 </body>
 
 </html>
+
