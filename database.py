@@ -65,6 +65,7 @@ class FrequentFlyer(Base):
     points = Column(Integer)
 
 # --- UPDATED CallHistory Table ---
+# This is the state-tracking table
 class CallHistory(Base):
     __tablename__ = "call_history"
     
@@ -73,7 +74,7 @@ class CallHistory(Base):
     call_id = Column(String(50), unique=True, index=True)
     caller_number = Column(String(20))
     start_time = Column(DateTime, default=datetime.now)
-    end_time = Column(DateTime, nullable=True)
+    end_time = Column(DateTime, nullable=True) # A call that is not ended will have NULL here
     
     # State Info
     current_menu = Column(String(50), default='main')
